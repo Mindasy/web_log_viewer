@@ -235,6 +235,8 @@
           <span class="token-legend-item"><span class="token-dot ts"></span> 时间戳</span>
           <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
           <span class="token-legend-item"><span class="token-dot th"></span> 线程</span>
+          <span class="token-legend-item"><span class="token-dot pid"></span> 进程号</span>
+          <span class="token-legend-item"><span class="token-dot tid"></span> 线程号</span>
           <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
           <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
           <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
@@ -257,6 +259,14 @@
           <div class="field-assign-row">
             <span class="field-label">线程</span>
             <select class="field-assign-select" data-field="thread"><option value="-1">未分配</option></select>
+          </div>
+          <div class="field-assign-row">
+            <span class="field-label">进程号</span>
+            <select class="field-assign-select" data-field="pid"><option value="-1">未分配</option></select>
+          </div>
+          <div class="field-assign-row">
+            <span class="field-label">线程号</span>
+            <select class="field-assign-select" data-field="tid"><option value="-1">未分配</option></select>
           </div>
           <div class="field-assign-row">
             <span class="field-label">来源</span>
@@ -380,6 +390,8 @@
           <span class="token-legend-item"><span class="token-dot ts"></span> 时间戳</span>
           <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
           <span class="token-legend-item"><span class="token-dot th"></span> 线程</span>
+          <span class="token-legend-item"><span class="token-dot pid"></span> 进程号</span>
+          <span class="token-legend-item"><span class="token-dot tid"></span> 线程号</span>
           <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
           <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
           <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
@@ -402,12 +414,15 @@
               <option value="">自定义...</option>
               <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024-01-15 10:23:45,123</option>
               <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}">2024-01-15 10:23:45</option>
+              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}">带时区(冒号) 2024-01-15 10:23:45,123 +08:00</option>
               <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}">带时区 2024-01-15 10:23:45,123 +0800</option>
               <option value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?">ISO 8601</option>
               <option value="\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024/01/15 10:23:45,123</option>
               <option value="\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}">Apache 15/Jan/2024:10:23:45 +0800</option>
               <option value="[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}">Syslog Jan 15 10:23:45</option>
               <option value="\d{2}:\d{2}:\d{2}[,.]\d{3}">仅时间 10:23:45,123</option>
+              <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}\]">[2024-01-15 10:23:45,123 +0800]</option>
+              <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\]">[2024-01-15 10:23:45,123]</option>
             </select>
             <input type="text" class="fp-input" id="fp-timestamp" placeholder="自定义正则..." />
           </div>
@@ -419,6 +434,7 @@
               <option value="FATAL|ERROR|WARN(?:ING)?|INFO|DEBUG|TRACE|VERBOSE">扩展级别</option>
               <option value="\w+">任意单词</option>
               <option value="\[?\w+\]?">可选括号包裹</option>
+              <option value="\[FATAL|ERROR|WARN|INFO|DEBUG|TRACE\]">[INFO] 方括号</option>
             </select>
             <input type="text" class="fp-input" id="fp-level" placeholder="自定义正则..." />
           </div>
@@ -429,8 +445,29 @@
               <option value="\[[^\]]+\]">[main] 方括号</option>
               <option value="[^\s]+">无括号</option>
               <option value="\[?[^\]]+\]?">可选括号</option>
+              <option value="\[\d+\]">[12345] 数字线程号</option>
             </select>
             <input type="text" class="fp-input" id="fp-thread" placeholder="自定义正则..." />
+          </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">进程号</span>
+            <select class="fp-preset" data-target="fp-pid">
+              <option value="">忽略...</option>
+              <option value="\d+">纯数字</option>
+              <option value="\[\d+\]">[12345] 方括号</option>
+              <option value="\[?\d+\]?">可选括号</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-pid" placeholder="进程号正则..." />
+          </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">线程号</span>
+            <select class="fp-preset" data-target="fp-tid">
+              <option value="">忽略...</option>
+              <option value="\d+">纯数字</option>
+              <option value="\[\d+\]">[12345] 方括号</option>
+              <option value="\[?\d+\]?">可选括号</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-tid" placeholder="线程号正则..." />
           </div>
           <div class="field-pattern-row">
             <span class="fp-label">来源</span>
@@ -439,6 +476,8 @@
               <option value="[\w.]+">com.example.App</option>
               <option value="\S+">任意非空白</option>
               <option value="[\w.]+:\d+">含行号 App.java:42</option>
+              <option value="[\w.]+(?::\w+)?(?::\d+)?">file.cpp:open:12</option>
+              <option value="\[[\w.]+(?::\w+)?(?::\d+)?\]">[file.cpp:open:12] 方括号</option>
             </select>
             <input type="text" class="fp-input" id="fp-source" placeholder="自定义正则..." />
           </div>
@@ -460,9 +499,16 @@
             <option value="\s*">可选空白 \s*</option>
             <option value="\s+-\s+"> - </option>
             <option value="\s*\|\s*"> | </option>
+            <option value="">无分隔符 (紧凑)</option>
             <option value="\s+">自定义...</option>
           </select>
           <input type="text" class="fp-input fp-sep" id="fp-separator" value="\s+" placeholder="\s+" />
+        </div>
+        <div class="fp-option-row">
+          <label class="fp-checkbox-label">
+            <input type="checkbox" id="fp-bracket-mode" />
+            自动包裹方括号 (每个字段外加 \[...\])
+          </label>
         </div>
       </div>
 
@@ -470,7 +516,8 @@
       <div class="config-section">
         <label>生成的正则表达式</label>
         <div class="regex-preview-box">
-          <code id="fp-generated-regex"></code>
+          <textarea id="fp-generated-regex" class="fp-regex-textarea" rows="2" placeholder="选择范式或输入正则片段" readonly></textarea>
+          <button id="btn-edit-fp-regex" class="fp-edit-btn" title="编辑正则">✏️</button>
           <button id="btn-copy-fp-regex" title="复制正则">📋</button>
         </div>
       </div>

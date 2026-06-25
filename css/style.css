@@ -784,6 +784,8 @@ html, body {
 .token-chip.timestamp { background: rgba(137,180,250,0.2); color: var(--accent); border-color: var(--accent); }
 .token-chip.level { background: rgba(243,139,168,0.2); color: var(--error); border-color: var(--error); }
 .token-chip.thread { background: rgba(166,227,161,0.2); color: var(--success); border-color: var(--success); }
+.token-chip.pid { background: rgba(155,89,182,0.2); color: #9b59b6; border-color: #9b59b6; }
+.token-chip.tid { background: rgba(26,188,156,0.2); color: #1abc9c; border-color: #1abc9c; }
 .token-chip.source { background: rgba(249,226,175,0.2); color: var(--warning); border-color: var(--warning); }
 .token-chip.message { background: rgba(137,220,235,0.2); color: var(--info); border-color: var(--info); }
 .token-chip .token-tag {
@@ -814,6 +816,8 @@ html, body {
 .token-dot.ts { background: var(--accent); }
 .token-dot.lv { background: var(--error); }
 .token-dot.th { background: var(--success); }
+.token-dot.pid { background: #9b59b6; }
+.token-dot.tid { background: #1abc9c; }
 .token-dot.src { background: var(--warning); }
 .token-dot.msg { background: var(--info); }
 .token-dot.ign { background: var(--text-muted); }
@@ -878,6 +882,39 @@ html, body {
   white-space: pre-wrap;
   line-height: 1.5;
 }
+.fp-regex-textarea {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--success);
+  word-break: break-all;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: vertical;
+  min-height: 24px;
+  padding: 0;
+}
+.fp-regex-textarea:not([readonly]) {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+.fp-edit-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.fp-edit-btn:hover { background: var(--bg-hover); }
 .regex-preview-box button {
   background: transparent;
   border: 1px solid var(--border-color);
@@ -1058,6 +1095,7 @@ html, body {
 }
 .wizard-test-stats .match-ok { color: var(--success); }
 .wizard-test-stats .match-fail { color: var(--error); }
+.wizard-test-stats .match-partial { color: var(--warning, #e6a817); }
 
 .wizard-actions {
   display: flex;
@@ -1398,6 +1436,24 @@ html, body {
   color: var(--text-muted);
   flex-shrink: 0;
   width: 100px;
+}
+.fp-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.fp-checkbox-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.fp-checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 
 /* ===== Go-to-line ===== */

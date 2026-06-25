@@ -379,6 +379,8 @@ const LogParser = {
         timestamp: fieldMap.timestamp || '',
         level: fieldMap.level || '',
         thread: fieldMap.thread || '',
+        pid: fieldMap.pid || '',
+        tid: fieldMap.tid || '',
         source: fieldMap.source || '',
         message: fieldMap.message || line,
         date: null,
@@ -391,13 +393,15 @@ const LogParser = {
       if (groups.timestamp || fieldMap._timestampVal) entry.timestamp = fieldMap._timestampVal || groups.timestamp || '';
       if (groups.level || fieldMap._levelVal) entry.level = fieldMap._levelVal || groups.level || '';
       if (groups.thread || fieldMap._threadVal) entry.thread = fieldMap._threadVal || groups.thread || '';
+      if (groups.pid || fieldMap._pidVal) entry.pid = fieldMap._pidVal || groups.pid || '';
+      if (groups.tid || fieldMap._tidVal) entry.tid = fieldMap._tidVal || groups.tid || '';
       if (groups.source || fieldMap._sourceVal) entry.source = fieldMap._sourceVal || groups.source || '';
       if (groups.message || fieldMap._messageVal) entry.message = fieldMap._messageVal || groups.message || '';
 
       // 保存所有自定义字段值
       for (const [groupName, value] of Object.entries(groups)) {
         const displayName = columnMap[groupName] || groupName;
-        if (!['timestamp', 'level', 'thread', 'source', 'message'].includes(groupName)) {
+        if (!['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message'].includes(groupName)) {
           entry.customFields[displayName] = value;
         }
       }
@@ -425,9 +429,15 @@ const LogParser = {
       } else if (lower === 'level' || lower === 'severity' || lower === 'loglevel' || lower === 'lvl') {
         result.level = groupName;
         result._levelVal = groups[groupName] || '';
-      } else if (lower === 'thread' || lower === 'threadname' || lower === 'tid') {
+      } else if (lower === 'thread' || lower === 'threadname') {
         result.thread = groupName;
         result._threadVal = groups[groupName] || '';
+      } else if (lower === 'pid' || lower === 'process' || lower === 'processid') {
+        result.pid = groupName;
+        result._pidVal = groups[groupName] || '';
+      } else if (lower === 'tid' || lower === 'threadid') {
+        result.tid = groupName;
+        result._tidVal = groups[groupName] || '';
       } else if (lower === 'source' || lower === 'logger' || lower === 'class' || lower === 'service') {
         result.source = groupName;
         result._sourceVal = groups[groupName] || '';
@@ -554,8 +564,10 @@ const SmartRuleGenerator = {
 
   // 已知的日期格式模式（含时区）
   datePatterns: [
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS ZZ' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS Z' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS' },
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss ZZ' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss Z' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss' },
     { regex: /\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy/MM/dd HH:mm:ss,SSS' },
@@ -625,24 +637,27 @@ const SmartRuleGenerator = {
       return 'level';
     }
 
-    // 检测线程 (方括号包裹的短内容)
-    if (/^\[.+\]$/.test(text) && text.length < 60) {
-      return 'thread';
+    // 检测纯数字（含方括号包裹的数字）
+    if (/^\d+$/.test(trimmed)) {
+      return 'number';
     }
 
-    // 检测来源 (包含点号的类名风格)
+    // 检测来源模式: filename:func:linenumber 或 package.Class
+    if (/^[\w./-]+:[\w./-]+(:\d+)?$/.test(trimmed) && trimmed.length > 5) {
+      return 'source';
+    }
     if (/^[a-zA-Z_][\w]*(\.[a-zA-Z_][\w]*)+/.test(trimmed) && trimmed.length > 5) {
       return 'source';
+    }
+
+    // 检测线程 (方括号包裹的非数字短内容)
+    if (/^\[.+\]$/.test(text) && text.length < 60 && !/^\d+$/.test(trimmed)) {
+      return 'thread';
     }
 
     // 检测分隔符
     if (/^[-:=>|]+$/.test(trimmed)) {
       return 'separator';
-    }
-
-    // 检测数字
-    if (/^\d+$/.test(trimmed)) {
-      return 'number';
     }
 
     // 默认：可能是消息的一部分
@@ -653,8 +668,8 @@ const SmartRuleGenerator = {
   autoAssign() {
     this.assignments = {};
 
-    // 优先级：timestamp > level > thread > source > message
-    let messageStartIdx = -1;
+    // 优先级：timestamp > level > thread > source > pid > tid > message
+    let numberCount = 0;
 
     for (let i = 0; i < this.tokens.length; i++) {
       const token = this.tokens[i];
@@ -679,6 +694,19 @@ const SmartRuleGenerator = {
       if (!this.assignments.source && token.type === 'source') {
         this.assignments.source = i;
         continue;
+      }
+
+      // 数字类型：第一个分配给pid，第二个分配给tid
+      if (token.type === 'number') {
+        numberCount++;
+        if (numberCount === 1 && !this.assignments.pid) {
+          this.assignments.pid = i;
+          continue;
+        }
+        if (numberCount === 2 && !this.assignments.tid) {
+          this.assignments.tid = i;
+          continue;
+        }
       }
     }
 
@@ -733,12 +761,15 @@ const SmartRuleGenerator = {
   // 根据分配生成正则表达式
   regenerateRegex() {
     const parts = [];
-    const fieldOrder = ['timestamp', 'level', 'thread', 'source', 'message'];
+    const fieldOrder = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message'];
     const assignedTokens = {};
 
     for (const [field, idx] of Object.entries(this.assignments)) {
       assignedTokens[idx] = field;
     }
+
+    // 检测连续括号token（如 ][ 无空格），使用空分隔符
+    const isBracketToken = (t) => t && /^\[[^\]]*\]$/.test(t.text);
 
     let i = 0;
     while (i < this.tokens.length) {
@@ -757,9 +788,23 @@ const SmartRuleGenerator = {
       }
     }
 
-    // 构建完整正则
+    // 构建完整正则：检测连续括号token使用空分隔符
     const separator = '\\s+';
-    this.generatedRegex = '^' + parts.join(separator) + '(.*)$';
+    let regexStr = '^';
+    for (let j = 0; j < parts.length; j++) {
+      regexStr += parts[j];
+      if (j < parts.length - 1) {
+        // 如果当前token和下一个token都是括号包裹的，使用空分隔符
+        const currToken = this.tokens[j];
+        const nextToken = this.tokens[j + 1];
+        if (isBracketToken(currToken) && isBracketToken(nextToken)) {
+          regexStr += '';
+        } else {
+          regexStr += separator;
+        }
+      }
+    }
+    this.generatedRegex = regexStr + '(.*)$';
 
     // 如果消息字段是最后一个命名字段，把后面的(.*)合并进去
     if (this.assignments.message !== undefined) {
@@ -781,7 +826,21 @@ const SmartRuleGenerator = {
           newParts.push(this.escapeRegex(this.tokens[j].text));
         }
       }
-      this.generatedRegex = '^' + newParts.join(separator);
+      // 重建时也处理连续括号
+      let msgRegex = '^';
+      for (let j = 0; j < newParts.length; j++) {
+        msgRegex += newParts[j];
+        if (j < newParts.length - 1) {
+          const currToken = this.tokens[j];
+          const nextToken = this.tokens[j + 1];
+          if (isBracketToken(currToken) && isBracketToken(nextToken)) {
+            msgRegex += '';
+          } else {
+            msgRegex += separator;
+          }
+        }
+      }
+      this.generatedRegex = msgRegex;
     }
 
     return this.generatedRegex;
@@ -799,8 +858,12 @@ const SmartRuleGenerator = {
       case 'thread':
         if (/^\[.+\]$/.test(text)) return '\\[[^\\]]+\\]';
         return '[^\\s]+';
+      case 'pid':
+      case 'tid':
+        if (/^\[.+\]$/.test(text)) return '\\[\\d+\\]';
+        return '\\d+';
       case 'source':
-        return '[\\w.]+';
+        return '[\\w./:-]+';
       case 'message':
         return '.+';
       default:

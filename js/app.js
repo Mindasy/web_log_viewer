@@ -384,7 +384,7 @@ const App = {
     const container = document.getElementById('token-list');
     const fieldColors = {
       timestamp: 'timestamp', level: 'level', thread: 'thread',
-      source: 'source', message: 'message'
+      pid: 'pid', tid: 'tid', source: 'source', message: 'message'
     };
 
     container.innerHTML = tokens.map((t, i) => {
@@ -414,7 +414,7 @@ const App = {
 
   // 循环切换token字段类型
   cycleTokenField(tokenIdx) {
-    const fieldCycle = ['timestamp', 'level', 'thread', 'source', 'message', null]; // null = 取消分配
+    const fieldCycle = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message', null]; // null = 取消分配
     const current = Object.entries(SmartRuleGenerator.assignments).find(([, idx]) => idx === tokenIdx);
     const currentField = current ? current[0] : null;
     const currentCycleIdx = fieldCycle.indexOf(currentField);
@@ -436,7 +436,7 @@ const App = {
 
   // 渲染字段分配下拉
   renderFieldAssigns(tokens) {
-    const fields = ['timestamp', 'level', 'thread', 'source', 'message'];
+    const fields = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message'];
     const assignments = SmartRuleGenerator.assignments;
 
     // 构建token选项
@@ -1210,7 +1210,7 @@ const ParseWizard = {
     }
 
     // ===== 字段模式输入（简化正则） =====
-    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-thread', 'fp-source', 'fp-message', 'fp-separator'];
+    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-thread', 'fp-pid', 'fp-tid', 'fp-source', 'fp-message', 'fp-separator'];
     fpInputs.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -1237,9 +1237,43 @@ const ParseWizard = {
     const btnCopyFp = document.getElementById('btn-copy-fp-regex');
     if (btnCopyFp) {
       btnCopyFp.addEventListener('click', () => {
-        const regex = document.getElementById('fp-generated-regex').textContent;
+        const el = document.getElementById('fp-generated-regex');
+        const regex = el ? (el.value || el.textContent) : '';
         if (regex) Utils.copyToClipboard(regex);
       });
+    }
+
+    // 括号模式切换
+    const bracketCheckbox = document.getElementById('fp-bracket-mode');
+    if (bracketCheckbox) {
+      bracketCheckbox.addEventListener('change', () => {
+        this.updateFieldPatternRegex();
+        this.testCurrentRule();
+      });
+    }
+
+    // 正则编辑/锁定按钮
+    const btnEditFp = document.getElementById('btn-edit-fp-regex');
+    const fpTextareaEl = document.getElementById('fp-generated-regex');
+    if (btnEditFp && fpTextareaEl) {
+      btnEditFp.addEventListener('click', () => {
+        const isReadonly = fpTextareaEl.hasAttribute('readonly');
+        if (isReadonly) {
+          fpTextareaEl.removeAttribute('readonly');
+          btnEditFp.textContent = '🔒';
+          btnEditFp.title = '锁定正则';
+        } else {
+          fpTextareaEl.setAttribute('readonly', '');
+          btnEditFp.textContent = '✏️';
+          btnEditFp.title = '编辑正则';
+          this.updateFieldPatternRegex();
+        }
+      });
+      fpTextareaEl.addEventListener('input', Utils.debounce(() => {
+        if (!fpTextareaEl.hasAttribute('readonly')) {
+          this.testCurrentRule();
+        }
+      }, 300));
     }
   },
 
@@ -1307,12 +1341,21 @@ const ParseWizard = {
     document.getElementById('fp-timestamp').value = '';
     document.getElementById('fp-level').value = '';
     document.getElementById('fp-thread').value = '';
+    document.getElementById('fp-pid').value = '';
+    document.getElementById('fp-tid').value = '';
     document.getElementById('fp-source').value = '';
     document.getElementById('fp-message').value = '';
     document.getElementById('fp-separator').value = '\\s+';
     // 重置预设下拉
     document.querySelectorAll('.fp-preset').forEach(s => s.value = '');
-    document.getElementById('fp-generated-regex').textContent = '选择范式或输入正则片段，自动生成完整正则';
+    // 重置括号模式
+    const bracketCheckbox = document.getElementById('fp-bracket-mode');
+    if (bracketCheckbox) bracketCheckbox.checked = false;
+    const fpTextarea = document.getElementById('fp-generated-regex');
+    if (fpTextarea) {
+      fpTextarea.value = '选择范式或输入正则片段，自动生成完整正则';
+      fpTextarea.setAttribute('readonly', '');
+    }
 
     // 显示面板
     document.getElementById('parse-wizard').style.display = 'flex';
@@ -1424,7 +1467,7 @@ const ParseWizard = {
 
     // 渲染token
     const container = document.getElementById('wizard-token-list');
-    const fieldColors = { timestamp: 'timestamp', level: 'level', thread: 'thread', source: 'source', message: 'message' };
+    const fieldColors = { timestamp: 'timestamp', level: 'level', thread: 'thread', pid: 'pid', tid: 'tid', source: 'source', message: 'message' };
 
     container.innerHTML = this.smartTokens.map((t, i) => {
       let fieldType = 'ignored';
@@ -1456,7 +1499,7 @@ const ParseWizard = {
 
   // 循环切换智能token
   cycleSmartToken(tokenIdx) {
-    const fieldCycle = ['timestamp', 'level', 'thread', 'source', 'message', null];
+    const fieldCycle = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message', null];
     const current = Object.entries(this.smartAssignments).find(([, idx]) => idx === tokenIdx);
     const currentField = current ? current[0] : null;
     const nextIdx = (fieldCycle.indexOf(currentField) + 1) % fieldCycle.length;
@@ -1828,6 +1871,11 @@ const ParseWizard = {
       return SmartRuleGenerator.generatedRegex || '';
     }
     if (this.currentMode === 'regex') {
+      // 检查用户是否手动编辑了生成的正则
+      const fpTextarea = document.getElementById('fp-generated-regex');
+      if (fpTextarea && !fpTextarea.hasAttribute('readonly') && fpTextarea.value.trim()) {
+        return fpTextarea.value.trim();
+      }
       // 优先使用字段模式生成的正则
       const fpRegex = this.getFieldPatternRegex();
       if (fpRegex) return fpRegex;
@@ -1846,28 +1894,40 @@ const ParseWizard = {
     const ts = document.getElementById('fp-timestamp')?.value.trim();
     const lv = document.getElementById('fp-level')?.value.trim();
     const th = document.getElementById('fp-thread')?.value.trim();
+    const pid = document.getElementById('fp-pid')?.value.trim();
+    const tid = document.getElementById('fp-tid')?.value.trim();
     const src = document.getElementById('fp-source')?.value.trim();
     const msg = document.getElementById('fp-message')?.value.trim();
-    const sep = document.getElementById('fp-separator')?.value.trim() || '\\s+';
+    const sep = document.getElementById('fp-separator')?.value.trim();
+    const bracketMode = document.getElementById('fp-bracket-mode')?.checked || false;
+
+    const wrap = (pattern) => {
+      if (!bracketMode) return pattern;
+      if (pattern.startsWith('\\[') && pattern.endsWith('\\]')) return pattern;
+      return `\\[${pattern}\\]`;
+    };
 
     const parts = [];
-    if (ts) parts.push(`(?<timestamp>${ts})`);
-    if (lv) parts.push(`(?<level>${lv})`);
-    if (th) parts.push(`(?<thread>${th})`);
-    if (src) parts.push(`(?<source>${src})`);
+    if (ts) parts.push(`(?<timestamp>${wrap(ts)})`);
+    if (lv) parts.push(`(?<level>${wrap(lv)})`);
+    if (th) parts.push(`(?<thread>${wrap(th)})`);
+    if (pid) parts.push(`(?<pid>${wrap(pid)})`);
+    if (tid) parts.push(`(?<tid>${wrap(tid)})`);
+    if (src) parts.push(`(?<source>${wrap(src)})`);
     if (msg) parts.push(`(?<message>${msg})`);
 
     if (parts.length === 0) return null;
 
-    return '^' + parts.join(sep) + '$';
+    return '^' + parts.join(sep || '') + '$';
   },
 
   // 更新字段模式生成的正则预览
   updateFieldPatternRegex() {
     const regex = this.getFieldPatternRegex();
-    const preview = document.getElementById('fp-generated-regex');
-    if (preview) {
-      preview.textContent = regex || '选择范式或输入正则片段';
+    const textarea = document.getElementById('fp-generated-regex');
+    if (textarea) {
+      textarea.value = regex || '';
+      textarea.placeholder = '选择范式或输入正则片段';
     }
   },
 
@@ -1957,11 +2017,60 @@ const ParseWizard = {
         const pct = ((matchCount / samples.length) * 100).toFixed(0);
         statsEl.innerHTML = `<span class="${pct > 50 ? 'match-ok' : 'match-fail'}">📊 前20行匹配: ${matchCount}/${samples.length} (${pct}%)</span>`;
       } else {
-        container.innerHTML = '<div style="color:var(--error);font-size:11px">❌ 当前样本行不匹配</div>';
-        statsEl.innerHTML = '<span class="match-fail">匹配失败 — 请调整规则或切换样本行</span>';
+        // 尝试部分匹配：逐个字段测试
+        const partialInfo = this.getPartialMatchInfo(regexStr, sample);
+        if (partialInfo && partialInfo.matched.length > 0) {
+          const matchedHtml = partialInfo.matched.map(({ name, value }) =>
+            `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(name)}</span><span class="wtf-value">${this.escapeHtml((value || '').substring(0, 120)) || '<span class="empty">(空)</span>'}</span></div>`
+          ).join('');
+          const unmatchedHtml = partialInfo.unmatched.length > 0
+            ? `<div style="color:var(--warning);font-size:10px;margin-top:4px">⚠️ 未匹配字段: ${partialInfo.unmatched.map(n => this.escapeHtml(n)).join(', ')}</div>`
+            : '';
+          container.innerHTML = matchedHtml + unmatchedHtml;
+          statsEl.innerHTML = `<span class="match-partial">⚠️ 部分匹配: ${partialInfo.matched.length}/${partialInfo.matched.length + partialInfo.unmatched.length} 个字段</span>`;
+        } else {
+          container.innerHTML = '<div style="color:var(--error);font-size:11px">❌ 当前样本行不匹配</div>';
+          statsEl.innerHTML = '<span class="match-fail">匹配失败 — 请调整规则或切换样本行</span>';
+        }
       }
     } catch (e) {
       // 静默处理
+    }
+  },
+
+  // 获取部分匹配信息：从正则中提取各命名组模式，逐个测试样本行
+  getPartialMatchInfo(regexStr, sample) {
+    try {
+      // 提取所有命名组及其模式
+      const groupPatterns = [];
+      const groupRegex = /\(\?<(\w+)>((?:[^()]|\((?:(?!\?[<:])[^()]*)\))*)\)/g;
+      let m;
+      while ((m = groupRegex.exec(regexStr)) !== null) {
+        groupPatterns.push({ name: m[1], pattern: m[2] });
+      }
+
+      if (groupPatterns.length === 0) return null;
+
+      const matched = [];
+      const unmatched = [];
+
+      for (const { name, pattern } of groupPatterns) {
+        try {
+          const fieldRegex = new RegExp(pattern);
+          const fm = sample.match(fieldRegex);
+          if (fm) {
+            matched.push({ name, value: fm[0] });
+          } else {
+            unmatched.push(name);
+          }
+        } catch {
+          unmatched.push(name);
+        }
+      }
+
+      return { matched, unmatched };
+    } catch {
+      return null;
     }
   },
 
@@ -1978,10 +2087,14 @@ const ParseWizard = {
       config.customDateFormat = (wdf ? wdf.value : '') || SmartRuleGenerator.generatedDateFormat;
     } else if (this.currentMode === 'regex') {
       config.preset = 'custom';
-      // 优先使用字段模式生成的正则
-      const fpRegex = this.getFieldPatternRegex();
-      const customEl = document.getElementById('wizard-custom-regex');
-      config.customRegex = fpRegex || (customEl ? customEl.value.trim() : '');
+      // 检查用户是否手动编辑了生成的正则
+      const fpTextarea = document.getElementById('fp-generated-regex');
+      if (fpTextarea && !fpTextarea.hasAttribute('readonly') && fpTextarea.value.trim()) {
+        config.customRegex = fpTextarea.value.trim();
+      } else {
+        const fpRegex = this.getFieldPatternRegex();
+        config.customRegex = fpRegex || '';
+      }
       config.customDateFormat = document.getElementById('wizard-regex-date-format').value.trim();
       // 提取自定义列名映射
       config.columnMap = this.extractColumnMap();
