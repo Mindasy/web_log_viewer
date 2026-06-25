@@ -383,7 +383,7 @@ const App = {
   renderTokens(tokens) {
     const container = document.getElementById('token-list');
     const fieldColors = {
-      timestamp: 'timestamp', level: 'level', thread: 'thread',
+      timestamp: 'timestamp', level: 'level',
       pid: 'pid', tid: 'tid', source: 'source', message: 'message'
     };
 
@@ -414,7 +414,7 @@ const App = {
 
   // 循环切换token字段类型
   cycleTokenField(tokenIdx) {
-    const fieldCycle = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message', null]; // null = 取消分配
+    const fieldCycle = ['timestamp', 'level', 'pid', 'tid', 'source', 'message', null]; // null = 取消分配
     const current = Object.entries(SmartRuleGenerator.assignments).find(([, idx]) => idx === tokenIdx);
     const currentField = current ? current[0] : null;
     const currentCycleIdx = fieldCycle.indexOf(currentField);
@@ -436,7 +436,7 @@ const App = {
 
   // 渲染字段分配下拉
   renderFieldAssigns(tokens) {
-    const fields = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message'];
+    const fields = ['timestamp', 'level', 'pid', 'tid', 'source', 'message'];
     const assignments = SmartRuleGenerator.assignments;
 
     // 构建token选项
@@ -1210,7 +1210,7 @@ const ParseWizard = {
     }
 
     // ===== 字段模式输入（简化正则） =====
-    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-thread', 'fp-pid', 'fp-tid', 'fp-source', 'fp-message', 'fp-separator'];
+    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-pid', 'fp-tid', 'fp-source', 'fp-message', 'fp-separator'];
     fpInputs.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -1340,7 +1340,6 @@ const ParseWizard = {
     // 初始化字段模式输入
     document.getElementById('fp-timestamp').value = '';
     document.getElementById('fp-level').value = '';
-    document.getElementById('fp-thread').value = '';
     document.getElementById('fp-pid').value = '';
     document.getElementById('fp-tid').value = '';
     document.getElementById('fp-source').value = '';
@@ -1467,7 +1466,7 @@ const ParseWizard = {
 
     // 渲染token
     const container = document.getElementById('wizard-token-list');
-    const fieldColors = { timestamp: 'timestamp', level: 'level', thread: 'thread', pid: 'pid', tid: 'tid', source: 'source', message: 'message' };
+    const fieldColors = { timestamp: 'timestamp', level: 'level', pid: 'pid', tid: 'tid', source: 'source', message: 'message' };
 
     container.innerHTML = this.smartTokens.map((t, i) => {
       let fieldType = 'ignored';
@@ -1499,7 +1498,7 @@ const ParseWizard = {
 
   // 循环切换智能token
   cycleSmartToken(tokenIdx) {
-    const fieldCycle = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message', null];
+    const fieldCycle = ['timestamp', 'level', 'pid', 'tid', 'source', 'message', null];
     const current = Object.entries(this.smartAssignments).find(([, idx]) => idx === tokenIdx);
     const currentField = current ? current[0] : null;
     const nextIdx = (fieldCycle.indexOf(currentField) + 1) % fieldCycle.length;
@@ -1846,7 +1845,7 @@ const ParseWizard = {
 
     if (nameLower.includes('time') || nameLower.includes('date') || nameLower.includes('ts')) return '🕐 时间戳';
     if (nameLower.includes('level') || nameLower.includes('severity') || nameLower.includes('lvl')) return '📊 日志级别';
-    if (nameLower.includes('thread') || nameLower.includes('tid')) return '🧵 线程';
+    if (nameLower.includes('tid') || nameLower.includes('threadid')) return '🔢 线程ID';
     if (nameLower.includes('source') || nameLower.includes('logger') || nameLower.includes('class')) return '📦 来源';
     if (nameLower.includes('message') || nameLower.includes('msg') || nameLower.includes('body')) return '💬 消息';
     if (nameLower.includes('host') || nameLower.includes('ip') || nameLower.includes('addr')) return '🖥️ 主机';
@@ -1893,7 +1892,6 @@ const ParseWizard = {
   getFieldPatternRegex() {
     const ts = document.getElementById('fp-timestamp')?.value.trim();
     const lv = document.getElementById('fp-level')?.value.trim();
-    const th = document.getElementById('fp-thread')?.value.trim();
     const pid = document.getElementById('fp-pid')?.value.trim();
     const tid = document.getElementById('fp-tid')?.value.trim();
     const src = document.getElementById('fp-source')?.value.trim();
@@ -1902,33 +1900,41 @@ const ParseWizard = {
     const bracketMode = document.getElementById('fp-bracket-mode')?.checked || false;
 
     const wrap = (pattern) => {
-      if (!bracketMode) return pattern;
-      if (pattern.startsWith('\\[') && pattern.endsWith('\\]')) return pattern;
-      return `\\[${pattern}\\]`;
+      if (!bracketMode) return { prefix: '', pattern, suffix: '' };
+      if (pattern.startsWith('\\[') && pattern.endsWith('\\]')) {
+        return { prefix: '\\[', pattern: pattern.slice(2, -2), suffix: '\\]' };
+      }
+      return { prefix: '\\[', pattern, suffix: '\\]' };
     };
 
     const parts = [];
-    if (ts) parts.push(`(?<timestamp>${wrap(ts)})`);
-    if (lv) parts.push(`(?<level>${wrap(lv)})`);
-    if (th) parts.push(`(?<thread>${wrap(th)})`);
-    if (pid) parts.push(`(?<pid>${wrap(pid)})`);
-    if (tid) parts.push(`(?<tid>${wrap(tid)})`);
-    if (src) parts.push(`(?<source>${wrap(src)})`);
-    if (msg) parts.push(`(?<message>${msg})`);
+    const addPart = (name, pattern) => {
+      if (!pattern) return;
+      const w = wrap(pattern);
+      parts.push(`${w.prefix}(?<${name}>${w.pattern})${w.suffix}`);
+    };
+    addPart('timestamp', ts);
+    addPart('level', lv);
+    addPart('pid', pid);
+    addPart('tid', tid);
+    addPart('source', src);
+    // message 始终捕获前面字段匹配后的剩余内容
+    if (msg) parts.push('(?<message>.*)');
 
     if (parts.length === 0) return null;
 
-    return '^' + parts.join(sep || '') + '$';
+    return '^' + parts.join(sep || '');
   },
 
   // 更新字段模式生成的正则预览
   updateFieldPatternRegex() {
-    const regex = this.getFieldPatternRegex();
     const textarea = document.getElementById('fp-generated-regex');
-    if (textarea) {
-      textarea.value = regex || '';
-      textarea.placeholder = '选择范式或输入正则片段';
-    }
+    if (!textarea) return;
+    // 如果用户正在手动编辑（非readonly），不覆盖
+    if (!textarea.hasAttribute('readonly')) return;
+    const regex = this.getFieldPatternRegex();
+    textarea.value = regex || '';
+    textarea.placeholder = '选择范式或输入正则片段';
   },
 
   // 获取当前日期格式

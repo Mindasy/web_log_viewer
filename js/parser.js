@@ -378,7 +378,6 @@ const LogParser = {
         raw: line,
         timestamp: fieldMap.timestamp || '',
         level: fieldMap.level || '',
-        thread: fieldMap.thread || '',
         pid: fieldMap.pid || '',
         tid: fieldMap.tid || '',
         source: fieldMap.source || '',
@@ -392,7 +391,6 @@ const LogParser = {
       // 填充标准字段
       if (groups.timestamp || fieldMap._timestampVal) entry.timestamp = fieldMap._timestampVal || groups.timestamp || '';
       if (groups.level || fieldMap._levelVal) entry.level = fieldMap._levelVal || groups.level || '';
-      if (groups.thread || fieldMap._threadVal) entry.thread = fieldMap._threadVal || groups.thread || '';
       if (groups.pid || fieldMap._pidVal) entry.pid = fieldMap._pidVal || groups.pid || '';
       if (groups.tid || fieldMap._tidVal) entry.tid = fieldMap._tidVal || groups.tid || '';
       if (groups.source || fieldMap._sourceVal) entry.source = fieldMap._sourceVal || groups.source || '';
@@ -401,7 +399,7 @@ const LogParser = {
       // 保存所有自定义字段值
       for (const [groupName, value] of Object.entries(groups)) {
         const displayName = columnMap[groupName] || groupName;
-        if (!['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message'].includes(groupName)) {
+        if (!['timestamp', 'level', 'pid', 'tid', 'source', 'message'].includes(groupName)) {
           entry.customFields[displayName] = value;
         }
       }
@@ -429,9 +427,6 @@ const LogParser = {
       } else if (lower === 'level' || lower === 'severity' || lower === 'loglevel' || lower === 'lvl') {
         result.level = groupName;
         result._levelVal = groups[groupName] || '';
-      } else if (lower === 'thread' || lower === 'threadname') {
-        result.thread = groupName;
-        result._threadVal = groups[groupName] || '';
       } else if (lower === 'pid' || lower === 'process' || lower === 'processid') {
         result.pid = groupName;
         result._pidVal = groups[groupName] || '';
@@ -650,11 +645,6 @@ const SmartRuleGenerator = {
       return 'source';
     }
 
-    // 检测线程 (方括号包裹的非数字短内容)
-    if (/^\[.+\]$/.test(text) && text.length < 60 && !/^\d+$/.test(trimmed)) {
-      return 'thread';
-    }
-
     // 检测分隔符
     if (/^[-:=>|]+$/.test(trimmed)) {
       return 'separator';
@@ -668,7 +658,7 @@ const SmartRuleGenerator = {
   autoAssign() {
     this.assignments = {};
 
-    // 优先级：timestamp > level > thread > source > pid > tid > message
+    // 优先级：timestamp > level > source > pid > tid > message
     let numberCount = 0;
 
     for (let i = 0; i < this.tokens.length; i++) {
@@ -683,11 +673,6 @@ const SmartRuleGenerator = {
 
       if (!this.assignments.level && token.type === 'level') {
         this.assignments.level = i;
-        continue;
-      }
-
-      if (!this.assignments.thread && token.type === 'thread') {
-        this.assignments.thread = i;
         continue;
       }
 
@@ -761,7 +746,7 @@ const SmartRuleGenerator = {
   // 根据分配生成正则表达式
   regenerateRegex() {
     const parts = [];
-    const fieldOrder = ['timestamp', 'level', 'thread', 'pid', 'tid', 'source', 'message'];
+    const fieldOrder = ['timestamp', 'level', 'pid', 'tid', 'source', 'message'];
     const assignedTokens = {};
 
     for (const [field, idx] of Object.entries(this.assignments)) {
@@ -855,9 +840,6 @@ const SmartRuleGenerator = {
         return '[^\\s]+(?:\\s+[^\\s]+)?'; // 可能包含空格的时间戳
       case 'level':
         return '\\w+';
-      case 'thread':
-        if (/^\[.+\]$/.test(text)) return '\\[[^\\]]+\\]';
-        return '[^\\s]+';
       case 'pid':
       case 'tid':
         if (/^\[.+\]$/.test(text)) return '\\[\\d+\\]';

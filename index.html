@@ -234,9 +234,8 @@
         <div class="token-legend">
           <span class="token-legend-item"><span class="token-dot ts"></span> 时间戳</span>
           <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
-          <span class="token-legend-item"><span class="token-dot th"></span> 线程</span>
-          <span class="token-legend-item"><span class="token-dot pid"></span> 进程号</span>
-          <span class="token-legend-item"><span class="token-dot tid"></span> 线程号</span>
+          <span class="token-legend-item"><span class="token-dot pid"></span> 进程ID</span>
+          <span class="token-legend-item"><span class="token-dot tid"></span> 线程ID</span>
           <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
           <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
           <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
@@ -257,15 +256,11 @@
             <select class="field-assign-select" data-field="level"><option value="-1">未分配</option></select>
           </div>
           <div class="field-assign-row">
-            <span class="field-label">线程</span>
-            <select class="field-assign-select" data-field="thread"><option value="-1">未分配</option></select>
-          </div>
-          <div class="field-assign-row">
-            <span class="field-label">进程号</span>
+            <span class="field-label">进程ID</span>
             <select class="field-assign-select" data-field="pid"><option value="-1">未分配</option></select>
           </div>
           <div class="field-assign-row">
-            <span class="field-label">线程号</span>
+            <span class="field-label">线程ID</span>
             <select class="field-assign-select" data-field="tid"><option value="-1">未分配</option></select>
           </div>
           <div class="field-assign-row">
@@ -389,9 +384,8 @@
         <div class="token-legend">
           <span class="token-legend-item"><span class="token-dot ts"></span> 时间戳</span>
           <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
-          <span class="token-legend-item"><span class="token-dot th"></span> 线程</span>
-          <span class="token-legend-item"><span class="token-dot pid"></span> 进程号</span>
-          <span class="token-legend-item"><span class="token-dot tid"></span> 线程号</span>
+          <span class="token-legend-item"><span class="token-dot pid"></span> 进程ID</span>
+          <span class="token-legend-item"><span class="token-dot tid"></span> 线程ID</span>
           <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
           <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
           <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
@@ -439,35 +433,24 @@
             <input type="text" class="fp-input" id="fp-level" placeholder="自定义正则..." />
           </div>
           <div class="field-pattern-row">
-            <span class="fp-label">线程</span>
-            <select class="fp-preset" data-target="fp-thread">
-              <option value="">自定义...</option>
-              <option value="\[[^\]]+\]">[main] 方括号</option>
-              <option value="[^\s]+">无括号</option>
-              <option value="\[?[^\]]+\]?">可选括号</option>
-              <option value="\[\d+\]">[12345] 数字线程号</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-thread" placeholder="自定义正则..." />
-          </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">进程号</span>
+            <span class="fp-label">进程ID</span>
             <select class="fp-preset" data-target="fp-pid">
               <option value="">忽略...</option>
               <option value="\d+">纯数字</option>
               <option value="\[\d+\]">[12345] 方括号</option>
               <option value="\[?\d+\]?">可选括号</option>
             </select>
-            <input type="text" class="fp-input" id="fp-pid" placeholder="进程号正则..." />
+            <input type="text" class="fp-input" id="fp-pid" placeholder="进程ID正则..." />
           </div>
           <div class="field-pattern-row">
-            <span class="fp-label">线程号</span>
+            <span class="fp-label">线程ID</span>
             <select class="fp-preset" data-target="fp-tid">
               <option value="">忽略...</option>
               <option value="\d+">纯数字</option>
               <option value="\[\d+\]">[12345] 方括号</option>
               <option value="\[?\d+\]?">可选括号</option>
             </select>
-            <input type="text" class="fp-input" id="fp-tid" placeholder="线程号正则..." />
+            <input type="text" class="fp-input" id="fp-tid" placeholder="线程ID正则..." />
           </div>
           <div class="field-pattern-row">
             <span class="fp-label">来源</span>
