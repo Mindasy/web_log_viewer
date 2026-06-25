@@ -161,6 +161,16 @@ const App = {
       LogFilter.state.timeTo = e.target.value;
       this.refresh();
     });
+
+    // ===== 跳转到行 =====
+    const gotoInput = document.getElementById('goto-line-input');
+    gotoInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.gotoLine();
+      }
+    });
+    document.getElementById('btn-goto-line').addEventListener('click', () => this.gotoLine());
   },
 
   // ===== 详情面板 =====
@@ -581,6 +591,12 @@ const App = {
         e.preventDefault();
         this.exportLogs();
       }
+      // Ctrl+G: 跳转到行
+      if (e.ctrlKey && e.key === 'g') {
+        e.preventDefault();
+        document.getElementById('goto-line-input').focus();
+        document.getElementById('goto-line-input').select();
+      }
     });
   },
 
@@ -639,6 +655,9 @@ const App = {
   },
 
   // ===== 实时追踪 =====
+  // 实时追踪用于监控正在写入的日志文件（如应用运行时日志）。
+  // 由于浏览器安全限制，无法直接访问本地文件系统进行 tail -f 操作。
+  // 当前为模拟模式，实际使用时需要配合后端 API 或本地服务实现真正的文件轮询。
   toggleTail() {
     const btn = document.getElementById('btn-tail');
     if (this.tailTimer) {
@@ -647,6 +666,7 @@ const App = {
       this.tailFile = null;
       btn.textContent = '▶️ 实时追踪';
       btn.style.color = '';
+      document.getElementById('status-text').textContent = '就绪';
       Utils.showToast('已停止实时追踪');
     } else {
       if (!LogParser.fileInfo) {
@@ -655,11 +675,10 @@ const App = {
       }
       btn.textContent = '⏸️ 停止追踪';
       btn.style.color = 'var(--success)';
-      Utils.showToast('实时追踪已启动（模拟模式 - 浏览器限制）', 'success');
-      // 浏览器中无法真正tail文件，这里做模拟
+      document.getElementById('status-text').textContent = '实时追踪中（模拟）';
+      Utils.showToast('实时追踪：浏览器端无法直接 tail 本地文件。如需真正实时追踪，请配合后端轮询接口使用。当前为模拟演示。', 'success');
       this.tailTimer = setInterval(() => {
-        // 在实际场景中，这里会轮询文件变化
-        document.getElementById('status-text').textContent = '实时追踪中...';
+        document.getElementById('status-text').textContent = '实时追踪中（模拟）';
       }, 2000);
     }
   },
@@ -860,6 +879,80 @@ const App = {
     this.updateSearchStats();
   },
 
+  // ===== 跳转到指定行 =====
+  gotoLine() {
+    const input = document.getElementById('goto-line-input');
+    const val = input.value.trim();
+    if (!val) return;
+
+    const hasSearch = LogFilter.searchMatches.length > 0;
+
+    if (val.startsWith('#')) {
+      // #N: 跳转到搜索结果中的第 N 个
+      if (!hasSearch) {
+        Utils.showToast('没有搜索结果', 'error');
+        return;
+      }
+      const searchIdx = parseInt(val.substring(1), 10);
+      if (isNaN(searchIdx) || searchIdx < 1 || searchIdx > LogFilter.searchMatches.length) {
+        Utils.showToast(`搜索结果序号无效 (1-${LogFilter.searchMatches.length})`, 'error');
+        return;
+      }
+      LogFilter.currentMatchIndex = searchIdx - 1;
+      const entry = LogFilter.searchMatches[searchIdx - 1];
+      LogGrid.scrollToEntry(entry);
+      this.updateSearchStats();
+      Utils.showToast(`已跳转到第 ${searchIdx} 个搜索结果（原始行号 ${entry.index + 1}）`, 'success');
+      return;
+    }
+
+    if (val.startsWith('@')) {
+      // @N: 跳转到第 N 个书签
+      if (this.bookmarks.length === 0) {
+        Utils.showToast('没有书签', 'error');
+        return;
+      }
+      const bmIdx = parseInt(val.substring(1), 10);
+      if (isNaN(bmIdx) || bmIdx < 1 || bmIdx > this.bookmarks.length) {
+        Utils.showToast(`书签序号无效 (1-${this.bookmarks.length})`, 'error');
+        return;
+      }
+      const entry = this.bookmarks[bmIdx - 1];
+      LogGrid.scrollToEntry(entry);
+      Utils.showToast(`已跳转到第 ${bmIdx} 个书签（原始行号 ${entry.index + 1}）`, 'success');
+      return;
+    }
+
+    const lineNum = parseInt(val, 10);
+    if (isNaN(lineNum) || lineNum < 1) {
+      Utils.showToast('请输入有效的行号', 'error');
+      return;
+    }
+
+    if (hasSearch) {
+      // 有搜索结果时：按原始行号在搜索结果中查找
+      const matchIdx = LogFilter.searchMatches.findIndex(e => (e.index + 1) === lineNum);
+      if (matchIdx === -1) {
+        Utils.showToast(`搜索结果中未找到原始行号 ${lineNum}`, 'error');
+        return;
+      }
+      LogFilter.currentMatchIndex = matchIdx;
+      const entry = LogFilter.searchMatches[matchIdx];
+      LogGrid.scrollToEntry(entry);
+      this.updateSearchStats();
+      Utils.showToast(`已跳转到原始行号 ${lineNum}（搜索结果第 ${matchIdx + 1}/${LogFilter.searchMatches.length} 个）`, 'success');
+    } else {
+      // 无搜索结果时：按原始行号在全量数据中查找
+      const entry = LogParser.entries.find(e => (e.index + 1) === lineNum);
+      if (!entry) {
+        Utils.showToast(`未找到原始行号 ${lineNum}（有效范围 1-${LogParser.entries.length}）`, 'error');
+        return;
+      }
+      LogGrid.scrollToEntry(entry);
+      Utils.showToast(`已跳转到原始行号 ${lineNum}`, 'success');
+    }
+  },
+
   updateSearchStats() {
     const stats = document.getElementById('search-stats');
     if (LogFilter.searchMatches.length > 0) {
@@ -905,28 +998,52 @@ const App = {
       fileStats[src] = (fileStats[src] || 0) + 1;
     }
 
-    // 去重并排序
-    const uniqueFiles = [];
-    const seen = new Set();
+    // 分组：ZIP 文件内的文件按 ZIP 包名分组
+    const zipGroups = {}; // { zipName: [sourceFile, ...] }
+    const standaloneFiles = [];
+
     for (const sf of sourceFiles) {
-      if (!seen.has(sf.name)) {
-        seen.add(sf.name);
-        uniqueFiles.push(sf);
+      if (sf.zipName) {
+        if (!zipGroups[sf.zipName]) zipGroups[sf.zipName] = [];
+        // 去重（同一 ZIP 内同名文件）
+        const exists = zipGroups[sf.zipName].find(f => f.name === sf.name);
+        if (!exists) zipGroups[sf.zipName].push(sf);
+      } else {
+        const exists = standaloneFiles.find(f => f.name === sf.name);
+        if (!exists) standaloneFiles.push(sf);
       }
     }
 
-    container.innerHTML = uniqueFiles.map((sf, i) => {
+    let html = '';
+
+    // 渲染 ZIP 分组
+    for (const [zipName, files] of Object.entries(zipGroups)) {
+      html += `<div class="file-group-header" title="${this.escapeHtml(zipName)}">
+        <span class="file-icon">📦</span>
+        <span class="file-name">${this.escapeHtml(zipName)}</span>
+        <span class="file-badge">ZIP</span>
+      </div>`;
+      for (const sf of files) {
+        const count = fileStats[sf.name] || 0;
+        html += `<div class="file-item file-item-child" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.displayName || sf.name)}">
+          <span class="file-icon">└ 📄</span>
+          <span class="file-name">${this.escapeHtml(sf.displayName || sf.name)}</span>
+          <span class="file-count">${Utils.formatNumber(count)}</span>
+        </div>`;
+      }
+    }
+
+    // 渲染独立文件
+    for (const sf of standaloneFiles) {
       const count = fileStats[sf.name] || 0;
-      const isZip = sf.name.toLowerCase().endsWith('.zip');
-      const icon = isZip ? '📦' : '📄';
-      const badge = isZip ? '<span class="file-badge">ZIP</span>' : '';
-      return `<div class="file-item" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.name)}">
-        <span class="file-icon">${icon}</span>
+      html += `<div class="file-item" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.name)}">
+        <span class="file-icon">📄</span>
         <span class="file-name">${this.escapeHtml(sf.name)}</span>
-        ${badge}
         <span class="file-count">${Utils.formatNumber(count)}</span>
       </div>`;
-    }).join('');
+    }
+
+    container.innerHTML = html;
 
     // 点击文件项：过滤该文件的日志
     container.querySelectorAll('.file-item').forEach(item => {
@@ -990,11 +1107,7 @@ const ParseWizard = {
           this.runSmartAnalysis();
         }
         if (this.currentMode === 'regex') {
-          // 预填一个基于样本的正则提示
-          const sample = this.getCurrentSample();
-          if (sample && !document.getElementById('wizard-custom-regex').value) {
-            // 不自动填充，让用户自己写
-          }
+          this.updateFieldPatternRegex();
         }
       });
     });
@@ -1020,70 +1133,114 @@ const ParseWizard = {
     // 预设选择变化时自动测试
     document.getElementById('wizard-preset-select').addEventListener('change', () => this.testCurrentRule());
 
-    // 手动正则输入时实时测试 + 语法高亮
+    // 手动正则输入时实时测试 + 语法高亮（元素可能不存在）
     const regexInput = document.getElementById('wizard-custom-regex');
-    regexInput.addEventListener('input', Utils.debounce(() => {
-      this.updateRegexHighlight();
-      this.updateRegexStatus();
-      this.analyzeRegexGroups();
-      this.testCurrentRule();
-    }, 200));
+    if (regexInput) {
+      regexInput.addEventListener('input', Utils.debounce(() => {
+        this.updateRegexHighlight();
+        this.updateRegexStatus();
+        this.analyzeRegexGroups();
+        this.testCurrentRule();
+      }, 200));
 
-    // 同步滚动
-    regexInput.addEventListener('scroll', () => {
-      const highlight = document.getElementById('regex-highlight-layer');
-      highlight.scrollTop = regexInput.scrollTop;
-      highlight.scrollLeft = regexInput.scrollLeft;
-    });
+      // 同步滚动
+      regexInput.addEventListener('scroll', () => {
+        const highlight = document.getElementById('regex-highlight-layer');
+        if (highlight) {
+          highlight.scrollTop = regexInput.scrollTop;
+          highlight.scrollLeft = regexInput.scrollLeft;
+        }
+      });
 
-    // Tab 键支持
-    regexInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const start = regexInput.selectionStart;
-        const end = regexInput.selectionEnd;
-        regexInput.value = regexInput.value.substring(0, start) + '  ' + regexInput.value.substring(end);
-        regexInput.selectionStart = regexInput.selectionEnd = start + 2;
-        regexInput.dispatchEvent(new Event('input'));
-      }
-    });
+      // Tab 键支持
+      regexInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          const start = regexInput.selectionStart;
+          const end = regexInput.selectionEnd;
+          regexInput.value = regexInput.value.substring(0, start) + '  ' + regexInput.value.substring(end);
+          regexInput.selectionStart = regexInput.selectionEnd = start + 2;
+          regexInput.dispatchEvent(new Event('input'));
+        }
+      });
+    }
 
-    // 快捷插入按钮
+    // 快捷插入按钮（元素可能不存在）
     document.querySelectorAll('.quick-insert-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const insert = btn.dataset.insert;
-        const start = regexInput.selectionStart;
-        const end = regexInput.selectionEnd;
-        const before = regexInput.value.substring(0, start);
-        const after = regexInput.value.substring(end);
-        // 智能添加分隔符
+        const input = document.getElementById('wizard-custom-regex');
+        if (!input) return;
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        const before = input.value.substring(0, start);
+        const after = input.value.substring(end);
         const needSep = before.length > 0 && !before.endsWith('\\') && !before.endsWith(' ');
         const sep = needSep ? '\\s+' : '';
-        regexInput.value = before + sep + insert + after;
-        regexInput.focus();
-        regexInput.selectionStart = regexInput.selectionEnd = start + sep.length + insert.length;
-        regexInput.dispatchEvent(new Event('input'));
+        input.value = before + sep + insert + after;
+        input.focus();
+        input.selectionStart = input.selectionEnd = start + sep.length + insert.length;
+        input.dispatchEvent(new Event('input'));
       });
     });
 
     // 智能模式：日期格式
-    document.getElementById('wizard-date-format').addEventListener('input', Utils.debounce(() => {
-      SmartRuleGenerator.generatedDateFormat = document.getElementById('wizard-date-format').value;
-      this.testCurrentRule();
-    }, 300));
+    const wizardDateFormat = document.getElementById('wizard-date-format');
+    if (wizardDateFormat) {
+      wizardDateFormat.addEventListener('input', Utils.debounce(() => {
+        SmartRuleGenerator.generatedDateFormat = wizardDateFormat.value;
+        this.testCurrentRule();
+      }, 300));
+    }
 
-    // 正则提示展开/收起
-    document.getElementById('btn-toggle-regex-hint').addEventListener('click', () => {
-      const body = document.getElementById('regex-hint-body');
-      const btn = document.getElementById('btn-toggle-regex-hint');
-      if (body.classList.contains('collapsed')) {
-        body.classList.remove('collapsed');
-        btn.textContent = '收起';
-      } else {
-        body.classList.add('collapsed');
-        btn.textContent = '展开';
+    // 正则提示展开/收起（元素可能不存在）
+    const btnToggleHint = document.getElementById('btn-toggle-regex-hint');
+    if (btnToggleHint) {
+      btnToggleHint.addEventListener('click', () => {
+        const body = document.getElementById('regex-hint-body');
+        if (!body) return;
+        if (body.classList.contains('collapsed')) {
+          body.classList.remove('collapsed');
+          btnToggleHint.textContent = '收起';
+        } else {
+          body.classList.add('collapsed');
+          btnToggleHint.textContent = '展开';
+        }
+      });
+    }
+
+    // ===== 字段模式输入（简化正则） =====
+    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-thread', 'fp-source', 'fp-message', 'fp-separator'];
+    fpInputs.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', Utils.debounce(() => {
+          this.updateFieldPatternRegex();
+          this.testCurrentRule();
+        }, 200));
       }
     });
+
+    // 字段模式预设下拉
+    document.querySelectorAll('.fp-preset').forEach(select => {
+      select.addEventListener('change', () => {
+        const targetId = select.dataset.target;
+        const targetInput = document.getElementById(targetId);
+        if (targetInput && select.value) {
+          targetInput.value = select.value;
+          targetInput.dispatchEvent(new Event('input'));
+        }
+      });
+    });
+
+    // 复制字段模式生成的正则
+    const btnCopyFp = document.getElementById('btn-copy-fp-regex');
+    if (btnCopyFp) {
+      btnCopyFp.addEventListener('click', () => {
+        const regex = document.getElementById('fp-generated-regex').textContent;
+        if (regex) Utils.copyToClipboard(regex);
+      });
+    }
   },
 
   // 显示向导
@@ -1138,11 +1295,24 @@ const ParseWizard = {
     document.getElementById('wizard-panel-preset').style.display = 'block';
     document.getElementById('wizard-preset-select').value = 'auto';
     document.getElementById('wizard-encoding').value = 'UTF-8';
-    document.getElementById('wizard-custom-regex').value = '';
+    const customRegexEl = document.getElementById('wizard-custom-regex');
+    if (customRegexEl) customRegexEl.value = '';
     document.getElementById('wizard-regex-date-format').value = '';
-    document.getElementById('wizard-date-format').value = '';
+    const wizardDateFormatEl = document.getElementById('wizard-date-format');
+    if (wizardDateFormatEl) wizardDateFormatEl.value = '';
     document.getElementById('wizard-test-fields').innerHTML = '';
     document.getElementById('wizard-test-stats').innerHTML = '';
+
+    // 初始化字段模式输入
+    document.getElementById('fp-timestamp').value = '';
+    document.getElementById('fp-level').value = '';
+    document.getElementById('fp-thread').value = '';
+    document.getElementById('fp-source').value = '';
+    document.getElementById('fp-message').value = '';
+    document.getElementById('fp-separator').value = '\\s+';
+    // 重置预设下拉
+    document.querySelectorAll('.fp-preset').forEach(s => s.value = '');
+    document.getElementById('fp-generated-regex').textContent = '选择范式或输入正则片段，自动生成完整正则';
 
     // 显示面板
     document.getElementById('parse-wizard').style.display = 'flex';
@@ -1276,7 +1446,8 @@ const ParseWizard = {
     });
 
     // 日期格式
-    document.getElementById('wizard-date-format').value = SmartRuleGenerator.generatedDateFormat || '';
+    const wdf = document.getElementById('wizard-date-format');
+    if (wdf) wdf.value = SmartRuleGenerator.generatedDateFormat || '';
 
     // 生成正则并测试
     SmartRuleGenerator.regenerateRegex();
@@ -1591,7 +1762,9 @@ const ParseWizard = {
       customNames.push(inp.value.trim());
     });
 
-    let regexStr = document.getElementById('wizard-custom-regex').value.trim();
+    const regexEl = document.getElementById('wizard-custom-regex');
+    if (!regexEl) return;
+    let regexStr = regexEl.value.trim();
     if (!regexStr) return;
 
     // 先移除所有已有的命名组标记，变成普通捕获组
@@ -1613,7 +1786,8 @@ const ParseWizard = {
     // 处理未命名组：如果用户给未命名组输入了名称，需要把对应的 ( 替换为 (?<name>
     // 这需要精确匹配位置，比较复杂。采用替代方案：在正则末尾追加说明
     if (result !== regexStr) {
-      document.getElementById('wizard-custom-regex').value = result;
+      const regexEl2 = document.getElementById('wizard-custom-regex');
+      if (regexEl2) regexEl2.value = result;
       // 触发重新分析
       setTimeout(() => {
         this.analyzeRegexGroups();
@@ -1654,7 +1828,11 @@ const ParseWizard = {
       return SmartRuleGenerator.generatedRegex || '';
     }
     if (this.currentMode === 'regex') {
-      return document.getElementById('wizard-custom-regex').value.trim();
+      // 优先使用字段模式生成的正则
+      const fpRegex = this.getFieldPatternRegex();
+      if (fpRegex) return fpRegex;
+      const customEl = document.getElementById('wizard-custom-regex');
+      return customEl ? customEl.value.trim() : '';
     }
     // preset 模式
     const preset = document.getElementById('wizard-preset-select').value;
@@ -1663,10 +1841,41 @@ const ParseWizard = {
     return p ? p.regex.source : null;
   },
 
+  // 从字段模式输入生成正则表达式
+  getFieldPatternRegex() {
+    const ts = document.getElementById('fp-timestamp')?.value.trim();
+    const lv = document.getElementById('fp-level')?.value.trim();
+    const th = document.getElementById('fp-thread')?.value.trim();
+    const src = document.getElementById('fp-source')?.value.trim();
+    const msg = document.getElementById('fp-message')?.value.trim();
+    const sep = document.getElementById('fp-separator')?.value.trim() || '\\s+';
+
+    const parts = [];
+    if (ts) parts.push(`(?<timestamp>${ts})`);
+    if (lv) parts.push(`(?<level>${lv})`);
+    if (th) parts.push(`(?<thread>${th})`);
+    if (src) parts.push(`(?<source>${src})`);
+    if (msg) parts.push(`(?<message>${msg})`);
+
+    if (parts.length === 0) return null;
+
+    return '^' + parts.join(sep) + '$';
+  },
+
+  // 更新字段模式生成的正则预览
+  updateFieldPatternRegex() {
+    const regex = this.getFieldPatternRegex();
+    const preview = document.getElementById('fp-generated-regex');
+    if (preview) {
+      preview.textContent = regex || '选择范式或输入正则片段';
+    }
+  },
+
   // 获取当前日期格式
   getCurrentDateFormat() {
     if (this.currentMode === 'smart') {
-      return document.getElementById('wizard-date-format').value || SmartRuleGenerator.generatedDateFormat || '';
+      const wdf = document.getElementById('wizard-date-format');
+      return (wdf ? wdf.value : '') || SmartRuleGenerator.generatedDateFormat || '';
     }
     if (this.currentMode === 'regex') {
       return document.getElementById('wizard-regex-date-format').value.trim();
@@ -1690,67 +1899,67 @@ const ParseWizard = {
         return;
       }
 
-    if (this.currentMode === 'preset') {
-      const preset = document.getElementById('wizard-preset-select').value;
-      if (preset === 'auto') {
-        container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">自动检测模式 — 将自动匹配最佳格式</div>';
+      if (this.currentMode === 'preset') {
+        const preset = document.getElementById('wizard-preset-select').value;
+        if (preset === 'auto') {
+          container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">自动检测模式 — 将自动匹配最佳格式</div>';
+          statsEl.innerHTML = '';
+          return;
+        }
+        if (preset === 'json') {
+          try {
+            const obj = JSON.parse(sample);
+            container.innerHTML = Object.entries(obj).slice(0, 8).map(([k, v]) =>
+              `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(k)}</span><span class="wtf-value">${this.escapeHtml(String(v).substring(0, 100))}</span></div>`
+            ).join('');
+            statsEl.innerHTML = '<span class="match-ok">✅ JSON 解析成功</span>';
+          } catch {
+            container.innerHTML = '<div style="color:var(--error);font-size:11px">❌ 不是有效的 JSON</div>';
+            statsEl.innerHTML = '<span class="match-fail">JSON 解析失败</span>';
+          }
+          return;
+        }
+      }
+
+      // 正则匹配测试
+      const regexStr = this.getCurrentRegex();
+      if (!regexStr) {
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">无正则表达式</div>';
         statsEl.innerHTML = '';
         return;
       }
-      if (preset === 'json') {
-        try {
-          const obj = JSON.parse(sample);
-          container.innerHTML = Object.entries(obj).slice(0, 8).map(([k, v]) =>
-            `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(k)}</span><span class="wtf-value">${this.escapeHtml(String(v).substring(0, 100))}</span></div>`
-          ).join('');
-          statsEl.innerHTML = '<span class="match-ok">✅ JSON 解析成功</span>';
-        } catch {
-          container.innerHTML = '<div style="color:var(--error);font-size:11px">❌ 不是有效的 JSON</div>';
-          statsEl.innerHTML = '<span class="match-fail">JSON 解析失败</span>';
-        }
+
+      let regex;
+      try {
+        regex = new RegExp(regexStr);
+      } catch (e) {
+        container.innerHTML = `<div style="color:var(--error);font-size:11px">❌ 正则无效: ${this.escapeHtml(e.message)}</div>`;
+        statsEl.innerHTML = '<span class="match-fail">正则表达式语法错误</span>';
         return;
       }
-    }
 
-    // 正则匹配测试
-    const regexStr = this.getCurrentRegex();
-    if (!regexStr) {
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">无正则表达式</div>';
-      statsEl.innerHTML = '';
-      return;
-    }
+      const match = sample.match(regex);
+      if (match && match.groups) {
+        const fields = match.groups;
+        // 获取自定义列名映射
+        const colMap = this.extractColumnMap();
+        container.innerHTML = Object.entries(fields).map(([k, v]) => {
+          const displayName = colMap[k] || k;
+          return `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(displayName)}</span><span class="wtf-value">${this.escapeHtml((v || '').substring(0, 120)) || '<span class="empty">(空)</span>'}</span></div>`;
+        }).join('');
 
-    let regex;
-    try {
-      regex = new RegExp(regexStr);
-    } catch (e) {
-      container.innerHTML = `<div style="color:var(--error);font-size:11px">❌ 正则无效: ${this.escapeHtml(e.message)}</div>`;
-      statsEl.innerHTML = '<span class="match-fail">正则表达式语法错误</span>';
-      return;
-    }
-
-    const match = sample.match(regex);
-    if (match && match.groups) {
-      const fields = match.groups;
-      // 获取自定义列名映射
-      const colMap = this.extractColumnMap();
-      container.innerHTML = Object.entries(fields).map(([k, v]) => {
-        const displayName = colMap[k] || k;
-        return `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(displayName)}</span><span class="wtf-value">${this.escapeHtml((v || '').substring(0, 120)) || '<span class="empty">(空)</span>'}</span></div>`;
-      }).join('');
-
-      // 统计前20行匹配率
-      const samples = this.rawLines.slice(0, 20);
-      let matchCount = 0;
-      for (const line of samples) {
-        if (regex.test(line)) matchCount++;
+        // 统计前20行匹配率
+        const samples = this.rawLines.slice(0, 20);
+        let matchCount = 0;
+        for (const line of samples) {
+          if (regex.test(line)) matchCount++;
+        }
+        const pct = ((matchCount / samples.length) * 100).toFixed(0);
+        statsEl.innerHTML = `<span class="${pct > 50 ? 'match-ok' : 'match-fail'}">📊 前20行匹配: ${matchCount}/${samples.length} (${pct}%)</span>`;
+      } else {
+        container.innerHTML = '<div style="color:var(--error);font-size:11px">❌ 当前样本行不匹配</div>';
+        statsEl.innerHTML = '<span class="match-fail">匹配失败 — 请调整规则或切换样本行</span>';
       }
-      const pct = ((matchCount / samples.length) * 100).toFixed(0);
-      statsEl.innerHTML = `<span class="${pct > 50 ? 'match-ok' : 'match-fail'}">📊 前20行匹配: ${matchCount}/${samples.length} (${pct}%)</span>`;
-    } else {
-      container.innerHTML = '<div style="color:var(--error);font-size:11px">❌ 当前样本行不匹配</div>';
-      statsEl.innerHTML = '<span class="match-fail">匹配失败 — 请调整规则或切换样本行</span>';
-    }
     } catch (e) {
       // 静默处理
     }
@@ -1765,10 +1974,14 @@ const ParseWizard = {
     if (this.currentMode === 'smart') {
       config.preset = 'custom';
       config.customRegex = SmartRuleGenerator.generatedRegex;
-      config.customDateFormat = document.getElementById('wizard-date-format').value || SmartRuleGenerator.generatedDateFormat;
+      const wdf = document.getElementById('wizard-date-format');
+      config.customDateFormat = (wdf ? wdf.value : '') || SmartRuleGenerator.generatedDateFormat;
     } else if (this.currentMode === 'regex') {
       config.preset = 'custom';
-      config.customRegex = document.getElementById('wizard-custom-regex').value.trim();
+      // 优先使用字段模式生成的正则
+      const fpRegex = this.getFieldPatternRegex();
+      const customEl = document.getElementById('wizard-custom-regex');
+      config.customRegex = fpRegex || (customEl ? customEl.value.trim() : '');
       config.customDateFormat = document.getElementById('wizard-regex-date-format').value.trim();
       // 提取自定义列名映射
       config.columnMap = this.extractColumnMap();

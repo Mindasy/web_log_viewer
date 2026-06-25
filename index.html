@@ -44,6 +44,11 @@
       <button id="btn-whole-word" class="toggle-btn" title="全词匹配">W</button>
       <button id="btn-highlight" class="toggle-btn active" title="高亮匹配">🖍️</button>
       <span id="search-stats" class="search-stats"></span>
+      <span class="goto-row">
+        <span style="font-size:10px;color:var(--text-muted)">跳转到</span>
+        <input type="text" id="goto-line-input" placeholder="行号/#搜索/@书签" title="行号 | #N=第N个搜索结果 | @N=第N个书签" />
+        <button id="btn-goto-line" title="跳转到指定行">→</button>
+      </span>
     </div>
     <div class="quick-filters">
       <label class="filter-chip" data-level="FATAL"><input type="checkbox" checked> FATAL</label>
@@ -389,98 +394,85 @@
     <!-- 手动正则面板 -->
     <div id="wizard-panel-regex" class="wizard-panel" style="display:none;">
       <div class="config-section">
-        <label>正则表达式 <span class="label-hint">(支持命名捕获组 (?&lt;name&gt;...)，name 将作为列名)</span></label>
-        <div class="regex-editor-wrapper">
-          <div class="regex-editor">
-            <div class="regex-line-numbers" id="regex-line-numbers">1</div>
-            <div class="regex-input-area">
-              <textarea id="wizard-custom-regex" rows="3" placeholder="输入正则表达式..." spellcheck="false"></textarea>
-              <pre class="regex-highlight-layer" id="regex-highlight-layer" aria-hidden="true"></pre>
-            </div>
+        <label>字段模式 <span class="label-hint">(选择范式或自定义正则片段，自动组合成完整正则)</span></label>
+        <div class="field-pattern-grid">
+          <div class="field-pattern-row">
+            <span class="fp-label">时间戳</span>
+            <select class="fp-preset" data-target="fp-timestamp">
+              <option value="">自定义...</option>
+              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024-01-15 10:23:45,123</option>
+              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}">2024-01-15 10:23:45</option>
+              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}">带时区 2024-01-15 10:23:45,123 +0800</option>
+              <option value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?">ISO 8601</option>
+              <option value="\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024/01/15 10:23:45,123</option>
+              <option value="\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}">Apache 15/Jan/2024:10:23:45 +0800</option>
+              <option value="[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}">Syslog Jan 15 10:23:45</option>
+              <option value="\d{2}:\d{2}:\d{2}[,.]\d{3}">仅时间 10:23:45,123</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-timestamp" placeholder="自定义正则..." />
           </div>
-          <div class="regex-editor-footer">
-            <div class="regex-quick-inserts">
-              <span class="quick-insert-label">快捷插入:</span>
-              <button class="quick-insert-btn" data-insert="(?&lt;timestamp&gt;\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3})" title="时间戳模式">🕐 时间戳</button>
-              <button class="quick-insert-btn" data-insert="(?&lt;level&gt;\w+)" title="日志级别">📊 级别</button>
-              <button class="quick-insert-btn" data-insert="\[(?&lt;thread&gt;[^\]]+)\]" title="线程名">🧵 线程</button>
-              <button class="quick-insert-btn" data-insert="(?&lt;source&gt;[\w.]+)" title="来源/类名">📦 来源</button>
-              <button class="quick-insert-btn" data-insert="(?&lt;message&gt;.*)" title="消息体">💬 消息</button>
-              <button class="quick-insert-btn" data-insert="\s+" title="空白分隔">⊔ 空白</button>
-            </div>
-            <div class="regex-editor-status">
-              <span id="regex-char-count">0 字符</span>
-              <span id="regex-group-count" class="regex-group-badge"></span>
-              <span id="regex-validity"></span>
-            </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">级别</span>
+            <select class="fp-preset" data-target="fp-level">
+              <option value="">自定义...</option>
+              <option value="FATAL|ERROR|WARN|INFO|DEBUG|TRACE">标准级别</option>
+              <option value="FATAL|ERROR|WARN(?:ING)?|INFO|DEBUG|TRACE|VERBOSE">扩展级别</option>
+              <option value="\w+">任意单词</option>
+              <option value="\[?\w+\]?">可选括号包裹</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-level" placeholder="自定义正则..." />
           </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">线程</span>
+            <select class="fp-preset" data-target="fp-thread">
+              <option value="">自定义...</option>
+              <option value="\[[^\]]+\]">[main] 方括号</option>
+              <option value="[^\s]+">无括号</option>
+              <option value="\[?[^\]]+\]?">可选括号</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-thread" placeholder="自定义正则..." />
+          </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">来源</span>
+            <select class="fp-preset" data-target="fp-source">
+              <option value="">自定义...</option>
+              <option value="[\w.]+">com.example.App</option>
+              <option value="\S+">任意非空白</option>
+              <option value="[\w.]+:\d+">含行号 App.java:42</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-source" placeholder="自定义正则..." />
+          </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">消息</span>
+            <select class="fp-preset" data-target="fp-message">
+              <option value="">自定义...</option>
+              <option value=".*">任意内容（到行尾）</option>
+              <option value=".+">非空内容</option>
+              <option value="[^-].*">排除分隔符</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-message" placeholder="自定义正则..." />
+          </div>
+        </div>
+        <div class="fp-separator-row">
+          <span class="fp-label">分隔符</span>
+          <select class="fp-preset" data-target="fp-separator">
+            <option value="\s+">空白 \s+</option>
+            <option value="\s*">可选空白 \s*</option>
+            <option value="\s+-\s+"> - </option>
+            <option value="\s*\|\s*"> | </option>
+            <option value="\s+">自定义...</option>
+          </select>
+          <input type="text" class="fp-input fp-sep" id="fp-separator" value="\s+" placeholder="\s+" />
         </div>
       </div>
 
-      <!-- 正则语法提示 -->
-      <div class="config-section" id="regex-hint-section">
-        <div class="regex-hint-header">
-          <span>💡 正则语法提示</span>
-          <button id="btn-toggle-regex-hint" class="hint-toggle">收起</button>
+      <!-- 生成的正则预览 -->
+      <div class="config-section">
+        <label>生成的正则表达式</label>
+        <div class="regex-preview-box">
+          <code id="fp-generated-regex"></code>
+          <button id="btn-copy-fp-regex" title="复制正则">📋</button>
         </div>
-        <div id="regex-hint-body" class="regex-hint-body">
-          <div class="regex-hint-grid">
-            <div class="regex-hint-item">
-              <code>(?&lt;name&gt;...)</code>
-              <span>命名捕获组，name 将作为列名</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\d{4}-\d{2}-\d{2}</code>
-              <span>日期: 2024-01-15</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\d{2}:\d{2}:\d{2}[,.]\d{3}</code>
-              <span>时间: 10:23:45,123</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\w+</code>
-              <span>单词 (级别、标签等)</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\[[^\]]+\]</code>
-              <span>方括号内容 (线程名等)</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>[\w.]+</code>
-              <span>类名: com.example.App</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\S+</code>
-              <span>非空白连续字符</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>.*</code>
-              <span>匹配到行尾 (消息体)</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\s+</code>
-              <span>一个或多个空白字符</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>\s*</code>
-              <span>零个或多个空白字符</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>(?:...)</code>
-              <span>非捕获组 (不提取)</span>
-            </div>
-            <div class="regex-hint-item">
-              <code>^ ... $</code>
-              <span>行首 / 行尾</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 捕获组说明 -->
-      <div class="config-section" id="regex-groups-section" style="display:none;">
-        <label>捕获组说明 &amp; 列名映射</label>
-        <div id="regex-groups-list" class="regex-groups-list"></div>
       </div>
 
       <div class="config-section">

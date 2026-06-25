@@ -141,7 +141,12 @@ const LogParser = {
       isZip: true,
       zipFileCount: textFiles.length
     };
-    this.sourceFiles = textFiles.map(f => ({ name: f.name, size: f.entry._data?.uncompressedSize || 0 }));
+    this.sourceFiles = textFiles.map(f => ({
+      name: file.name + '/' + f.name,
+      displayName: f.name,
+      zipName: file.name,
+      size: f.entry._data?.uncompressedSize || 0
+    }));
 
     // 读取并合并所有文本文件
     const allLines = [];
@@ -153,7 +158,7 @@ const LogParser = {
         const lines = content.split(/\r?\n/);
         for (const line of lines) {
           allLines.push(line);
-          fileLineMap.push(tf.name);
+          fileLineMap.push(file.name + '/' + tf.name);
         }
       } catch (e) {
         console.warn(`无法读取 ZIP 中的文件: ${tf.name}`, e);
@@ -547,15 +552,18 @@ const SmartRuleGenerator = {
   generatedRegex: '',
   generatedDateFormat: '',
 
-  // 已知的日期格式模式
+  // 已知的日期格式模式（含时区）
   datePatterns: [
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS Z' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS' },
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss Z' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss' },
     { regex: /\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy/MM/dd HH:mm:ss,SSS' },
     { regex: /\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'yyyy/MM/dd HH:mm:ss' },
     { regex: /\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s+[+-]\d{4}/, fmt: 'dd/MMM/yyyy:HH:mm:ss Z' },
     { regex: /[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'MMM dd HH:mm:ss' },
-    { regex: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?/, fmt: "yyyy-MM-dd'T'HH:mm:ss.SSS" },
+    { regex: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?/, fmt: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX" },
+    { regex: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z/, fmt: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'" },
     { regex: /\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'HH:mm:ss,SSS' },
     { regex: /\d{2}:\d{2}:\d{2}/, fmt: 'HH:mm:ss' },
   ],

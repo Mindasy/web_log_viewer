@@ -239,6 +239,29 @@ html, body {
   color: var(--accent);
   flex-shrink: 0;
 }
+.file-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  margin-top: 4px;
+  cursor: default;
+}
+.file-group-header .file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-item-child {
+  padding-left: 20px !important;
+  font-size: 10px !important;
+}
 
 /* ===== Log Panel ===== */
 #log-panel {
@@ -1324,6 +1347,88 @@ html, body {
   font-size: 10px;
   font-style: italic;
 }
+
+/* ===== Field Pattern Grid (简化正则输入) ===== */
+.field-pattern-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field-pattern-row, .fp-separator-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fp-label {
+  width: 50px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+  flex-shrink: 0;
+}
+.fp-input {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.fp-input:focus { border-color: var(--accent); }
+.fp-input::placeholder { color: var(--text-muted); opacity: 0.5; }
+.fp-preset {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 5px 6px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+}
+.fp-preset:focus { border-color: var(--accent); }
+.fp-sep { max-width: 120px; }
+.fp-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 100px;
+}
+
+/* ===== Go-to-line ===== */
+.goto-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+.goto-row input {
+  width: 80px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: none;
+}
+.goto-row input:focus { border-color: var(--accent); }
+.goto-row button {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 11px;
+}
+.goto-row button:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* ===== Responsive ===== */
 @media (max-width: 800px) {
