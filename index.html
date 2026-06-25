@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LogViewPlus Web - 日志解析器</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<!-- 顶部工具栏 -->
+<div id="toolbar">
+  <div class="toolbar-group">
+    <button id="btn-open" title="打开日志文件 (Ctrl+O)">📂 打开</button>
+    <button id="btn-merge" title="合并多个日志文件">🔗 合并</button>
+    <button id="btn-reload" title="重新加载当前文件">🔄 重新加载</button>
+    <button id="btn-tail" title="实时追踪文件变化">▶️ 实时追踪</button>
+    <span class="separator"></span>
+    <button id="btn-export" title="导出过滤结果">💾 导出</button>
+    <button id="btn-clear" title="清除所有日志">🗑️ 清除</button>
+  </div>
+  <div class="toolbar-group">
+    <button id="btn-bookmark" title="添加书签 (Ctrl+B)">🔖 书签</button>
+    <button id="btn-bookmarks-panel" title="显示书签面板">📋 书签列表</button>
+    <span class="separator"></span>
+    <button id="btn-stats" title="统计信息">📊 统计</button>
+    <button id="btn-timeline" title="时间线视图">📈 时间线</button>
+    <span class="separator"></span>
+    <button id="btn-toggle-files" title="显示/隐藏文件列表">📁 文件</button>
+  </div>
+  <div class="toolbar-group toolbar-right">
+    <span id="status-text" class="status-text">就绪</span>
+    <span id="entry-count" class="entry-count"></span>
+  </div>
+</div>
+
+<!-- 搜索和过滤栏 -->
+<div id="filter-bar">
+  <div class="filter-row">
+    <div class="search-box">
+      <input type="text" id="search-input" placeholder="搜索日志... (支持正则)" />
+      <button id="btn-search" title="搜索 (Enter)">🔍</button>
+      <button id="btn-regex" class="toggle-btn" title="启用正则表达式">.*</button>
+      <button id="btn-case-sensitive" class="toggle-btn" title="区分大小写">Aa</button>
+      <button id="btn-whole-word" class="toggle-btn" title="全词匹配">W</button>
+      <button id="btn-highlight" class="toggle-btn active" title="高亮匹配">🖍️</button>
+      <span id="search-stats" class="search-stats"></span>
+    </div>
+    <div class="quick-filters">
+      <label class="filter-chip" data-level="FATAL"><input type="checkbox" checked> FATAL</label>
+      <label class="filter-chip error" data-level="ERROR"><input type="checkbox" checked> ERROR</label>
+      <label class="filter-chip warn" data-level="WARN"><input type="checkbox" checked> WARN</label>
+      <label class="filter-chip info" data-level="INFO"><input type="checkbox" checked> INFO</label>
+      <label class="filter-chip debug" data-level="DEBUG"><input type="checkbox" checked> DEBUG</label>
+      <label class="filter-chip trace" data-level="TRACE"><input type="checkbox" checked> TRACE</label>
+    </div>
+  </div>
+  <div class="filter-row" id="advanced-filters" style="display:none;">
+    <input type="text" id="filter-thread" placeholder="线程过滤..." />
+    <input type="text" id="filter-source" placeholder="来源过滤..." />
+    <input type="text" id="filter-message" placeholder="消息过滤..." />
+    <input type="datetime-local" id="filter-time-from" title="开始时间" />
+    <input type="datetime-local" id="filter-time-to" title="结束时间" />
+    <button id="btn-advanced-filter" class="toggle-btn" title="高级过滤">⚙️</button>
+  </div>
+</div>
+
+<!-- 主内容区 -->
+<div id="main-container">
+  <!-- 左侧：文件列表面板 -->
+  <div id="files-panel" class="collapsed">
+    <div id="files-panel-header">
+      <span>已打开的文件</span>
+      <button id="btn-close-files" title="隐藏文件列表">✕</button>
+    </div>
+    <div id="files-list"></div>
+  </div>
+
+  <!-- 日志表格 -->
+  <div id="log-panel">
+    <div id="grid-header">
+      <div class="col col-index" data-col="index">#</div>
+      <div class="col col-bookmark" data-col="bookmark">🔖</div>
+      <div class="col col-timestamp" data-col="timestamp">时间戳</div>
+      <div class="col col-level" data-col="level">级别</div>
+      <div class="col col-thread" data-col="thread">线程</div>
+      <div class="col col-source" data-col="source">来源</div>
+      <div class="col col-message" data-col="message">消息</div>
+    </div>
+    <div id="grid-body">
+      <div id="grid-viewport"></div>
+    </div>
+  </div>
+
+  <!-- 右侧：详情面板 -->
+  <div id="detail-panel" class="collapsed">
+    <div id="detail-resizer"></div>
+    <div id="detail-header">
+      <span>日志详情</span>
+      <button id="btn-close-detail" title="关闭详情面板">✕</button>
+    </div>
+    <div id="detail-content">
+      <div class="detail-field">
+        <label>时间戳</label>
+        <span id="detail-timestamp">-</span>
+      </div>
+      <div class="detail-field">
+        <label>级别</label>
+        <span id="detail-level">-</span>
+      </div>
+      <div class="detail-field">
+        <label>线程</label>
+        <span id="detail-thread">-</span>
+      </div>
+      <div class="detail-field">
+        <label>来源</label>
+        <span id="detail-source">-</span>
+      </div>
+      <div class="detail-field">
+        <label>消息</label>
+        <pre id="detail-message">-</pre>
+      </div>
+      <div class="detail-field">
+        <label>原始行</label>
+        <pre id="detail-raw">-</pre>
+      </div>
+      <div class="detail-actions">
+        <button id="btn-copy-entry">📋 复制</button>
+        <button id="btn-filter-similar">🔍 过滤相似</button>
+        <button id="btn-toggle-bookmark">🔖 书签</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 底部状态栏 -->
+<div id="status-bar">
+  <span id="status-file">未打开文件</span>
+  <span id="status-encoding">UTF-8</span>
+  <span id="status-memory"></span>
+  <span id="status-progress"></span>
+</div>
+
+<!-- 书签面板 (弹出) -->
+<div id="bookmarks-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>书签列表</span>
+    <button id="btn-close-bookmarks">✕</button>
+  </div>
+  <div id="bookmarks-list"></div>
+  <div class="popup-footer">
+    <button id="btn-clear-bookmarks">清除所有书签</button>
+    <button id="btn-export-bookmarks">导出书签</button>
+  </div>
+</div>
+
+<!-- 统计面板 (弹出) -->
+<div id="stats-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>日志统计</span>
+    <button id="btn-close-stats">✕</button>
+  </div>
+  <div id="stats-content">
+    <div class="stats-section">
+      <h3>级别分布</h3>
+      <div id="stats-level-chart"></div>
+    </div>
+    <div class="stats-section">
+      <h3>时间分布</h3>
+      <div id="stats-time-chart"></div>
+    </div>
+    <div class="stats-section">
+      <h3>摘要</h3>
+      <div id="stats-summary"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 时间线面板 (弹出) -->
+<div id="timeline-panel" class="popup-panel large-popup" style="display:none;">
+  <div class="popup-header">
+    <span>时间线视图</span>
+    <div class="timeline-controls">
+      <button id="btn-timeline-zoom-in">🔍+</button>
+      <button id="btn-timeline-zoom-out">🔍-</button>
+      <button id="btn-timeline-fit">↔️ 适应</button>
+    </div>
+    <button id="btn-close-timeline">✕</button>
+  </div>
+  <canvas id="timeline-canvas"></canvas>
+  <div id="timeline-tooltip" style="display:none;"></div>
+</div>
+
+<!-- 解析器配置面板 -->
+<div id="parser-config-panel" class="popup-panel wide-popup" style="display:none;">
+  <div class="popup-header">
+    <span>解析器配置</span>
+    <button id="btn-close-parser-config">✕</button>
+  </div>
+  <div id="parser-config-content">
+    <!-- 预设选择 -->
+    <div class="config-section">
+      <label>日志格式</label>
+      <select id="parser-preset">
+        <option value="auto">自动检测</option>
+        <option value="log4j">Log4j / Logback</option>
+        <option value="syslog">Syslog</option>
+        <option value="apache">Apache / Nginx</option>
+        <option value="json">JSON 日志</option>
+        <option value="custom">自定义正则</option>
+        <option value="smart">🧠 智能规则生成器</option>
+      </select>
+    </div>
+
+    <!-- 智能规则生成器 -->
+    <div id="smart-rule-section" style="display:none;">
+      <div class="config-section">
+        <label>粘贴一行日志样本</label>
+        <textarea id="smart-sample" rows="2" placeholder="粘贴一行日志，例如: 2024-01-15 10:23:45,123 INFO [main] com.example.App - Application started"></textarea>
+        <div class="smart-actions">
+          <button id="btn-analyze-sample">🔍 自动分析</button>
+          <button id="btn-paste-from-grid">📋 从选中行粘贴</button>
+        </div>
+      </div>
+
+      <!-- 分词可视化 -->
+      <div class="config-section" id="token-view-section" style="display:none;">
+        <label>分词结果 — 点击标记分配字段</label>
+        <div id="token-list" class="token-list"></div>
+        <div class="token-legend">
+          <span class="token-legend-item"><span class="token-dot ts"></span> 时间戳</span>
+          <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
+          <span class="token-legend-item"><span class="token-dot th"></span> 线程</span>
+          <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
+          <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
+          <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
+        </div>
+      </div>
+
+      <!-- 字段分配 -->
+      <div class="config-section" id="field-assign-section" style="display:none;">
+        <label>字段分配</label>
+        <div class="field-assign-grid">
+          <div class="field-assign-row">
+            <span class="field-label">时间戳</span>
+            <select class="field-assign-select" data-field="timestamp"><option value="-1">未分配</option></select>
+            <input type="text" class="field-date-format" data-field="dateFormat" placeholder="日期格式 (自动检测)" />
+          </div>
+          <div class="field-assign-row">
+            <span class="field-label">级别</span>
+            <select class="field-assign-select" data-field="level"><option value="-1">未分配</option></select>
+          </div>
+          <div class="field-assign-row">
+            <span class="field-label">线程</span>
+            <select class="field-assign-select" data-field="thread"><option value="-1">未分配</option></select>
+          </div>
+          <div class="field-assign-row">
+            <span class="field-label">来源</span>
+            <select class="field-assign-select" data-field="source"><option value="-1">未分配</option></select>
+          </div>
+          <div class="field-assign-row">
+            <span class="field-label">消息</span>
+            <select class="field-assign-select" data-field="message"><option value="-1">未分配</option></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 生成的正则预览 -->
+      <div class="config-section" id="regex-preview-section" style="display:none;">
+        <label>生成的正则表达式</label>
+        <div class="regex-preview-box">
+          <code id="generated-regex"></code>
+          <button id="btn-copy-regex" title="复制正则">📋</button>
+        </div>
+      </div>
+
+      <!-- 测试结果 -->
+      <div class="config-section" id="regex-test-section" style="display:none;">
+        <label>测试匹配 (从文件中采样)</label>
+        <div id="regex-test-results" class="regex-test-results"></div>
+      </div>
+
+      <div class="config-section">
+        <button id="btn-apply-smart-rule" class="btn-primary" disabled>✅ 应用此规则</button>
+      </div>
+    </div>
+
+    <!-- 自定义正则 (保留) -->
+    <div class="config-section" id="custom-regex-section" style="display:none;">
+      <label>自定义正则表达式</label>
+      <input type="text" id="custom-regex" placeholder="例如: (?&lt;timestamp&gt;\d{4}-\d{2}-\d{2}...)" />
+      <label>日期格式</label>
+      <input type="text" id="custom-date-format" placeholder="例如: yyyy-MM-dd HH:mm:ss.SSS" />
+    </div>
+
+    <div class="config-section">
+      <label>编码</label>
+      <select id="parser-encoding">
+        <option value="UTF-8">UTF-8</option>
+        <option value="GBK">GBK</option>
+        <option value="ISO-8859-1">ISO-8859-1</option>
+        <option value="Shift_JIS">Shift_JIS</option>
+      </select>
+    </div>
+    <div class="config-section">
+      <button id="btn-apply-parser">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- 解析向导对话框 (打开文件时弹出) -->
+<div id="parse-wizard" class="popup-panel wide-popup" style="display:none;">
+  <div class="popup-header">
+    <span>📂 日志解析向导</span>
+    <button id="btn-close-wizard">✕</button>
+  </div>
+  <div id="parse-wizard-content">
+    <!-- 文件信息 -->
+    <div class="config-section">
+      <label>文件</label>
+      <div id="wizard-file-info" class="wizard-file-info"></div>
+    </div>
+
+    <!-- 样本行 -->
+    <div class="config-section">
+      <label>样本行 (从文件中提取)</label>
+      <div id="wizard-sample-line" class="wizard-sample-line"></div>
+      <div class="wizard-sample-nav">
+        <button id="btn-prev-sample" title="上一行">◀</button>
+        <span id="wizard-sample-index">第 1 行</span>
+        <button id="btn-next-sample" title="下一行">▶</button>
+        <button id="btn-use-selected" title="使用当前选中行">📌 使用此行</button>
+      </div>
+    </div>
+
+    <!-- 解析方式选择 -->
+    <div class="config-section">
+      <label>解析方式</label>
+      <div class="wizard-mode-tabs">
+        <button class="wizard-tab active" data-mode="preset">📋 预设格式</button>
+        <button class="wizard-tab" data-mode="smart">🧠 智能识别</button>
+        <button class="wizard-tab" data-mode="regex">✍️ 手动正则</button>
+      </div>
+    </div>
+
+    <!-- 预设格式面板 -->
+    <div id="wizard-panel-preset" class="wizard-panel">
+      <div class="config-section">
+        <select id="wizard-preset-select">
+          <option value="auto">自动检测</option>
+          <option value="log4j">Log4j / Logback</option>
+          <option value="log4j2">Log4j2</option>
+          <option value="syslog">Syslog</option>
+          <option value="apache">Apache / Nginx</option>
+          <option value="json">JSON 日志</option>
+          <option value="generic">通用时间戳</option>
+        </select>
+      </div>
+      <div class="config-section">
+        <label>编码</label>
+        <select id="wizard-encoding">
+          <option value="UTF-8">UTF-8</option>
+          <option value="GBK">GBK</option>
+          <option value="ISO-8859-1">ISO-8859-1</option>
+          <option value="Shift_JIS">Shift_JIS</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 智能识别面板 -->
+    <div id="wizard-panel-smart" class="wizard-panel" style="display:none;">
+      <div class="config-section">
+        <label>分词结果 — 点击 token 切换字段类型</label>
+        <div id="wizard-token-list" class="token-list"></div>
+        <div class="token-legend">
+          <span class="token-legend-item"><span class="token-dot ts"></span> 时间戳</span>
+          <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
+          <span class="token-legend-item"><span class="token-dot th"></span> 线程</span>
+          <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
+          <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
+          <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
+        </div>
+      </div>
+      <div class="config-section">
+        <label>日期格式</label>
+        <input type="text" id="wizard-date-format" placeholder="自动检测" />
+      </div>
+    </div>
+
+    <!-- 手动正则面板 -->
+    <div id="wizard-panel-regex" class="wizard-panel" style="display:none;">
+      <div class="config-section">
+        <label>正则表达式 <span class="label-hint">(支持命名捕获组 (?&lt;name&gt;...)，name 将作为列名)</span></label>
+        <div class="regex-editor-wrapper">
+          <div class="regex-editor">
+            <div class="regex-line-numbers" id="regex-line-numbers">1</div>
+            <div class="regex-input-area">
+              <textarea id="wizard-custom-regex" rows="3" placeholder="输入正则表达式..." spellcheck="false"></textarea>
+              <pre class="regex-highlight-layer" id="regex-highlight-layer" aria-hidden="true"></pre>
+            </div>
+          </div>
+          <div class="regex-editor-footer">
+            <div class="regex-quick-inserts">
+              <span class="quick-insert-label">快捷插入:</span>
+              <button class="quick-insert-btn" data-insert="(?&lt;timestamp&gt;\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3})" title="时间戳模式">🕐 时间戳</button>
+              <button class="quick-insert-btn" data-insert="(?&lt;level&gt;\w+)" title="日志级别">📊 级别</button>
+              <button class="quick-insert-btn" data-insert="\[(?&lt;thread&gt;[^\]]+)\]" title="线程名">🧵 线程</button>
+              <button class="quick-insert-btn" data-insert="(?&lt;source&gt;[\w.]+)" title="来源/类名">📦 来源</button>
+              <button class="quick-insert-btn" data-insert="(?&lt;message&gt;.*)" title="消息体">💬 消息</button>
+              <button class="quick-insert-btn" data-insert="\s+" title="空白分隔">⊔ 空白</button>
+            </div>
+            <div class="regex-editor-status">
+              <span id="regex-char-count">0 字符</span>
+              <span id="regex-group-count" class="regex-group-badge"></span>
+              <span id="regex-validity"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 正则语法提示 -->
+      <div class="config-section" id="regex-hint-section">
+        <div class="regex-hint-header">
+          <span>💡 正则语法提示</span>
+          <button id="btn-toggle-regex-hint" class="hint-toggle">收起</button>
+        </div>
+        <div id="regex-hint-body" class="regex-hint-body">
+          <div class="regex-hint-grid">
+            <div class="regex-hint-item">
+              <code>(?&lt;name&gt;...)</code>
+              <span>命名捕获组，name 将作为列名</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\d{4}-\d{2}-\d{2}</code>
+              <span>日期: 2024-01-15</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\d{2}:\d{2}:\d{2}[,.]\d{3}</code>
+              <span>时间: 10:23:45,123</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\w+</code>
+              <span>单词 (级别、标签等)</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\[[^\]]+\]</code>
+              <span>方括号内容 (线程名等)</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>[\w.]+</code>
+              <span>类名: com.example.App</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\S+</code>
+              <span>非空白连续字符</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>.*</code>
+              <span>匹配到行尾 (消息体)</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\s+</code>
+              <span>一个或多个空白字符</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>\s*</code>
+              <span>零个或多个空白字符</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>(?:...)</code>
+              <span>非捕获组 (不提取)</span>
+            </div>
+            <div class="regex-hint-item">
+              <code>^ ... $</code>
+              <span>行首 / 行尾</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 捕获组说明 -->
+      <div class="config-section" id="regex-groups-section" style="display:none;">
+        <label>捕获组说明 &amp; 列名映射</label>
+        <div id="regex-groups-list" class="regex-groups-list"></div>
+      </div>
+
+      <div class="config-section">
+        <label>日期格式</label>
+        <input type="text" id="wizard-regex-date-format" placeholder="例如: yyyy-MM-dd HH:mm:ss,SSS" />
+      </div>
+    </div>
+
+    <!-- 匹配测试结果 -->
+    <div class="config-section" id="wizard-test-section">
+      <label>匹配测试</label>
+      <div id="wizard-test-result" class="wizard-test-result">
+        <div class="wizard-test-fields" id="wizard-test-fields"></div>
+      </div>
+      <div id="wizard-test-stats" class="wizard-test-stats"></div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="config-section wizard-actions">
+      <button id="btn-wizard-test" class="btn-secondary">🧪 测试匹配</button>
+      <button id="btn-wizard-apply" class="btn-primary">✅ 开始解析</button>
+      <button id="btn-wizard-skip" class="btn-secondary">⏭️ 跳过 (自动检测)</button>
+    </div>
+  </div>
+</div>
+
+<!-- 隐藏的文件输入 -->
+<input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip" multiple style="display:none;" />
+<input type="file" id="merge-file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip" multiple style="display:none;" />
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/parser.js"></script>
+<script src="js/filter.js"></script>
+<script src="js/grid.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
