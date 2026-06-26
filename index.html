@@ -49,9 +49,14 @@
       <button id="btn-highlight" class="toggle-btn active" title="高亮匹配 (Alt+点击打开设置)">🖍️</button>
       <span id="search-stats" class="search-stats"></span>
       <span class="goto-row">
-        <span style="font-size:10px;color:var(--text-muted)">跳转到</span>
-        <input type="text" id="goto-line-input" placeholder="行号/#搜索/@书签" title="行号 | #N=第N个搜索结果 | @N=第N个书签" />
-        <button id="btn-goto-line" title="跳转到指定行">→</button>
+        <span id="goto-row-cur" class="goto-row-cur" title="当前选中行">-</span>
+        <span class="goto-row-sep">/</span>
+        <span id="goto-row-total" class="goto-row-total" title="总行数">-</span>
+        <input type="text" id="goto-line-input" placeholder="行号/#搜索/@书签/$末行" title="行号 | #N=第N个搜索结果 | @N=第N个书签 | $=末行 | +/-N=相对偏移" />
+        <button id="btn-goto-line" title="跳转">→</button>
+        <span class="goto-row-divider"></span>
+        <button id="btn-scroll-top" class="goto-nav-btn" title="跳转到首行 (Home)">⬆</button>
+        <button id="btn-scroll-bottom" class="goto-nav-btn" title="跳转到末行 (End)">⬇</button>
       </span>
     </div>
     <div class="quick-filters">
