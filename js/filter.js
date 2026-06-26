@@ -8,6 +8,14 @@ const LogFilter = {
     caseSensitive: false,
     wholeWord: false,
     highlight: true,
+    highlightFields: {
+      timestamp: true,
+      level: true,
+      pid: true,
+      tid: true,
+      source: true,
+      message: true
+    },
     levels: { FATAL: true, ERROR: true, WARN: true, INFO: true, DEBUG: true, TRACE: true },
     threadFilter: '',
     sourceFilter: '',
@@ -22,6 +30,10 @@ const LogFilter = {
   // 搜索结果
   searchMatches: [],
   currentMatchIndex: -1,
+
+  // 正则缓存（避免每次高亮都重新创建 RegExp）
+  _regexCache: null,
+  _regexCacheKey: '',
 
   // 应用所有过滤
   apply(entries) {
@@ -95,9 +107,13 @@ const LogFilter = {
     return results;
   },
 
-  // 构建搜索正则
+  // 构建搜索正则（带缓存，避免重复构造 RegExp）
   buildSearchRegex() {
     if (!this.state.searchText) return null;
+    const key = `${this.state.searchText}|${this.state.useRegex}|${this.state.caseSensitive}|${this.state.wholeWord}`;
+    if (this._regexCache && this._regexCacheKey === key) {
+      return this._regexCache;
+    }
     let pattern = this.state.searchText;
     if (!this.state.useRegex) {
       pattern = Utils.escapeRegex(pattern);
@@ -107,8 +123,11 @@ const LogFilter = {
     }
     const flags = this.state.caseSensitive ? 'g' : 'gi';
     try {
-      return new RegExp(pattern, flags);
+      this._regexCache = new RegExp(pattern, flags);
+      this._regexCacheKey = key;
+      return this._regexCache;
     } catch {
+      this._regexCache = null;
       return null;
     }
   },
@@ -151,18 +170,46 @@ const LogFilter = {
   },
 
   // 获取高亮区域
-  getHighlights(text) {
+  getHighlights(text, field) {
     if (!this.state.highlight || !this.state.searchText) return [];
+    if (field && !this.state.highlightFields[field]) return [];
     const re = this.buildSearchRegex();
     if (!re) return [];
     const matches = [];
+    re.lastIndex = 0;
     let match;
-    const regex = new RegExp(re.source, re.flags); // 重新创建以重置lastIndex
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = re.exec(text)) !== null) {
       matches.push({ start: match.index, end: match.index + match[0].length });
-      if (match.index === regex.lastIndex) regex.lastIndex++;
+      if (match.index === re.lastIndex) re.lastIndex++;
     }
     return matches;
+  },
+
+  // 批量计算高亮（用于一次渲染周期内的所有可见行）
+  computeBatchHighlights(entries, start, end) {
+    if (!this.state.highlight || !this.state.searchText) return null;
+    const cache = Object.create(null);
+    const re = this.buildSearchRegex();
+    if (!re) return null;
+    for (let i = start; i < end; i++) {
+      const entry = entries[i];
+      const entryHl = Object.create(null);
+      for (const field of ['timestamp', 'level', 'pid', 'tid', 'source', 'message']) {
+        if (this.state.highlightFields[field] === false) continue;
+        const text = entry[field] || (field === 'message' ? entry.raw : '');
+        if (!text) continue;
+        re.lastIndex = 0;
+        const matches = [];
+        let match;
+        while ((match = re.exec(text)) !== null) {
+          matches.push({ start: match.index, end: match.index + match[0].length });
+          if (match.index === re.lastIndex) re.lastIndex++;
+        }
+        if (matches.length > 0) entryHl[field] = matches;
+      }
+      if (Object.keys(entryHl).length > 0) cache[entry.index] = entryHl;
+    }
+    return cache;
   },
 
   // 导航到下一个搜索结果

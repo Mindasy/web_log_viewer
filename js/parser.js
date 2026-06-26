@@ -509,9 +509,15 @@ const LogParser = {
   },
 
   // 合并多个文件（支持 ZIP + 普通文件混合）
-  async mergeFiles(files, config = {}) {
+  async mergeFiles(files, config = {}, append = false) {
     const cfg = { ...this.config, ...config };
     this.config = cfg;
+
+    // 追加模式：先保存已有数据
+    const savedEntries = append ? [...this.entries] : [];
+    const savedRaw = append ? [...this.rawLines] : [];
+    const savedSrc = append ? [...this.sourceFiles] : [];
+
     this.entries = [];
     this.rawLines = [];
     this.sourceFiles = [];
@@ -519,12 +525,12 @@ const LogParser = {
     const allEntries = [];
     const allRawLines = [];
     const allSourceFiles = [];
+    const failedFiles = [];
 
     for (const file of files) {
       try {
         // 检测是否为 ZIP 文件
         if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
-          // 直接调用 parseZipFile，不通过 parseFile（避免重复检测）
           const savedEntries = this.entries;
           const savedRaw = this.rawLines;
           const savedSrc = this.sourceFiles;
@@ -534,19 +540,21 @@ const LogParser = {
           this.rawLines = [];
           this.sourceFiles = [];
 
-          await this.parseZipFile(file, cfg, false);
+          try {
+            await this.parseZipFile(file, cfg, false);
 
-          this.entries.forEach(e => {
-            if (!e.sourceFile) e.sourceFile = file.name;
-          });
-          allEntries.push(...this.entries);
-          allRawLines.push(...this.rawLines);
-          allSourceFiles.push(...this.sourceFiles);
-
-          this.entries = savedEntries;
-          this.rawLines = savedRaw;
-          this.sourceFiles = savedSrc;
-          this.fileInfo = savedInfo;
+            this.entries.forEach(e => {
+              if (!e.sourceFile) e.sourceFile = file.name;
+            });
+            allEntries.push(...this.entries);
+            allRawLines.push(...this.rawLines);
+            allSourceFiles.push(...this.sourceFiles);
+          } finally {
+            this.entries = savedEntries;
+            this.rawLines = savedRaw;
+            this.sourceFiles = savedSrc;
+            this.fileInfo = savedInfo;
+          }
         } else {
           // 普通文件：直接读取并解析
           const text = await this.readFile(file, cfg.encoding);
@@ -573,7 +581,28 @@ const LogParser = {
           allSourceFiles.push({ name: file.name, size: file.size });
         }
       } catch (e) {
-        console.warn(`解析文件失败: ${file.name}`, e);
+        failedFiles.push(file.name);
+        console.error(`解析文件失败: ${file.name}`, e);
+      }
+    }
+
+    if (failedFiles.length > 0) {
+      const msg = failedFiles.length === files.length
+        ? `全部 ${failedFiles.length} 个文件解析失败`
+        : `${failedFiles.length}/${files.length} 个文件解析失败: ${failedFiles.join(', ')}`;
+      Utils.showToast(msg, 'error');
+    }
+
+    if (allEntries.length === 0 && savedEntries.length === 0) {
+      throw new Error('没有可解析的日志内容');
+    }
+
+    if (append && savedEntries.length > 0) {
+      allEntries.unshift(...savedEntries);
+      allRawLines.unshift(...savedRaw);
+      for (const sf of savedSrc) {
+        const exists = allSourceFiles.find(f => f.name === sf.name);
+        if (!exists) allSourceFiles.push(sf);
       }
     }
 
