@@ -94,6 +94,12 @@ const Utils = {
 
   closeAllPanels() {
     document.querySelectorAll('.popup-panel').forEach(p => (p.style.display = 'none'));
+    // 也关闭非 popup-panel 类的独立面板
+    const extraPanels = ['pattern-manager-main', 'pattern-save-panel', 'pattern-manager'];
+    extraPanels.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
   },
 
   // 下载文件
@@ -129,8 +135,14 @@ const Utils = {
   parseDate(str) {
     if (!str) return null;
 
+    // Normalize timezone: +800 → +08:00, +0800 → +08:00
+    let normalized = str.replace(/^\[|\]$/g, '');
+    normalized = normalized.replace(/\s([+-])(\d{1,2})(\d{2})(?=\s*$|$)/, (_, sign, hh, mm) => {
+      return ' ' + sign + hh.padStart(2, '0') + ':' + mm;
+    });
+
     // 先尝试原生 Date 解析（支持 ISO 8601 含时区格式）
-    const d = new Date(str);
+    const d = new Date(normalized);
     if (!isNaN(d.getTime())) return d;
 
     // 常见日志格式（含时区）
@@ -155,7 +167,7 @@ const Utils = {
       /(\d{2}:\d{2}:\d{2}[,.]\d{3})/,
     ];
     for (const p of patterns) {
-      const m = str.match(p);
+      const m = normalized.match(p);
       if (m) {
         const d2 = new Date(m[1]);
         if (!isNaN(d2.getTime())) return d2;
@@ -207,6 +219,8 @@ const Utils = {
     if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\s/.test(line)) return 'apache';
     // Syslog
     if (/^<\d+>/.test(line)) return 'syslog';
+    // Bracket log: [2025-01-01 01:01:01.000 +800][LEVEL]...
+    if (/^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/.test(line)) return 'bracketLog';
     // Log4j pattern
     if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/.test(line)) return 'log4j';
     // Generic timestamp

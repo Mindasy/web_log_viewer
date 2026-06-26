@@ -33,6 +33,12 @@ const LogParser = {
       groups: {},
       dateFormat: ''
     },
+    bracketLog: {
+      name: 'Bracket Log (括号格式)',
+      regex: /^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2,4})\]\[(\w+)\]\[(\d+)\]\[(\d+)\]\[([^\]]+)\]\[([^\]]+)\]\s*(.*)$/,
+      groups: { timestamp: 1, level: 2, pid: 3, tid: 4, tag: 5, source: 6, message: 7 },
+      dateFormat: 'yyyy-MM-dd HH:mm:ss,SSS Z'
+    },
     generic: {
       name: '通用时间戳',
       regex: /^(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{3})?(?:[+-]\d{2}:?\d{2})?)\s*(?:\[?(\w+)\]?\s*)?(?:\[([^\]]*)\]\s*)?(?:(\S+)\s*[-:]?\s*)?(.*)$/,
@@ -46,7 +52,10 @@ const LogParser = {
     preset: 'auto',
     customRegex: '',
     customDateFormat: '',
-    encoding: 'UTF-8'
+    customGroups: null,
+    encoding: 'UTF-8',
+    activePatternId: null,
+    activePatternName: ''
   },
 
   // 解析结果
@@ -97,6 +106,39 @@ const LogParser = {
     }
 
     return this.entries;
+  },
+
+  // 用新配置重新解析已加载的日志（不重新读文件）
+  async reparse(config) {
+    const cfg = { ...this.config, ...config };
+    this.config = cfg;
+    const oldEntries = this.entries;
+    this.entries = [];
+
+    const lines = this.rawLines || [];
+    let preset = cfg.preset;
+    if (preset === 'auto') {
+      preset = this.autoDetect(lines);
+    }
+
+    const parser = this.getParser(preset, cfg);
+    const sourceFileName = (this.sourceFiles && this.sourceFiles.length > 0)
+      ? this.sourceFiles[0].name : 'reparse';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      const entry = parser(line, i);
+      if (entry) {
+        entry.index = this.entries.length;
+        entry.lineNumber = i;
+        entry.sourceFile = sourceFileName;
+        this.entries.push(entry);
+      }
+    }
+
+    this.config = cfg;
+    return this.entries.length;
   },
 
   // 解析 ZIP 压缩文件
@@ -248,14 +290,14 @@ const LogParser = {
     }
 
     // 映射到预设名
-    const map = { log4j: 'log4j', apache: 'apache', syslog: 'syslog', json: 'json' };
+    const map = { log4j: 'log4j', apache: 'apache', syslog: 'syslog', json: 'json', bracketLog: 'bracketLog' };
     return map[best] || 'generic';
   },
 
   // 获取解析器函数
   getParser(preset, cfg) {
     if (preset === 'custom' && cfg.customRegex) {
-      return this.createCustomParser(cfg.customRegex, cfg.customDateFormat, cfg.columnMap || {});
+      return this.createCustomParser(cfg.customRegex, cfg.customDateFormat, cfg.columnMap || {}, cfg.customGroups || null);
     }
     if (preset === 'json') {
       return this.parseJsonLine.bind(this);
@@ -277,7 +319,10 @@ const LogParser = {
         raw: line,
         timestamp: groups.timestamp ? (match[groups.timestamp] || '').trim() : '',
         level: groups.level ? (match[groups.level] || '').trim() : '',
-        thread: groups.thread ? (match[groups.thread] || '').trim() : '',
+        pid: groups.pid ? (match[groups.pid] || '').trim() : '',
+        tid: groups.tid ? (match[groups.tid] || '').trim() : '',
+        thread: groups.thread ? (match[groups.thread] || '').trim() : (groups.tid ? (match[groups.tid] || '').trim() : ''),
+        tag: groups.tag ? (match[groups.tag] || '').trim() : '',
         source: groups.source ? (match[groups.source] || '').trim() : '',
         message: groups.message ? (match[groups.message] || '').trim() : line,
         date: null,
@@ -304,7 +349,10 @@ const LogParser = {
       raw: line,
       timestamp: '',
       level: '',
+      pid: '',
+      tid: '',
       thread: '',
+      tag: '',
       source: '',
       message: line,
       date: null,
@@ -338,7 +386,10 @@ const LogParser = {
         raw: line,
         timestamp: obj.timestamp || obj.time || obj['@timestamp'] || obj.date || '',
         level: obj.level || obj.severity || obj.log_level || '',
+        pid: obj.pid || obj.process_id || '',
+        tid: obj.tid || obj.thread_id || '',
         thread: obj.thread || obj.threadName || obj.thread_name || '',
+        tag: obj.tag || obj.component || '',
         source: obj.logger || obj.source || obj.class || obj.service || '',
         message: obj.message || obj.msg || obj.body || JSON.stringify(obj),
         date: null,
@@ -357,7 +408,7 @@ const LogParser = {
   },
 
   // 自定义正则解析器
-  createCustomParser(regexStr, dateFormat, columnMap = {}) {
+  createCustomParser(regexStr, dateFormat, columnMap = {}, customGroups = null) {
     let regex;
     try {
       regex = new RegExp(regexStr);
@@ -368,23 +419,30 @@ const LogParser = {
       const match = line.match(regex);
       if (!match) return this.genericParse(line, lineNum);
 
-      // 从命名捕获组提取字段
-      const groups = match.groups || {};
+      let groups = match.groups || null;
 
-      // 应用列名映射：将捕获组名映射到标准字段
+      if (!groups && customGroups) {
+        groups = {};
+        for (const [name, idx] of Object.entries(customGroups)) {
+          if (match[idx] !== undefined) groups[name] = match[idx] || '';
+        }
+      }
+      if (!groups) groups = {};
+
       const fieldMap = this.buildFieldMap(groups, columnMap);
 
       const entry = {
         raw: line,
-        timestamp: fieldMap.timestamp || '',
-        level: fieldMap.level || '',
-        pid: fieldMap.pid || '',
-        tid: fieldMap.tid || '',
-        source: fieldMap.source || '',
-        message: fieldMap.message || line,
+        timestamp: '',
+        level: '',
+        pid: '',
+        tid: '',
+        thread: '',
+        tag: '',
+        source: '',
+        message: line,
         date: null,
         bookmarked: false,
-        // 保存所有自定义字段
         customFields: {}
       };
 
@@ -393,13 +451,15 @@ const LogParser = {
       if (groups.level || fieldMap._levelVal) entry.level = fieldMap._levelVal || groups.level || '';
       if (groups.pid || fieldMap._pidVal) entry.pid = fieldMap._pidVal || groups.pid || '';
       if (groups.tid || fieldMap._tidVal) entry.tid = fieldMap._tidVal || groups.tid || '';
+      if (groups.thread || fieldMap._threadVal) entry.thread = fieldMap._threadVal || groups.thread || (groups.tid || '');
+      if (groups.tag || fieldMap._tagVal) entry.tag = fieldMap._tagVal || groups.tag || '';
       if (groups.source || fieldMap._sourceVal) entry.source = fieldMap._sourceVal || groups.source || '';
       if (groups.message || fieldMap._messageVal) entry.message = fieldMap._messageVal || groups.message || '';
 
       // 保存所有自定义字段值
       for (const [groupName, value] of Object.entries(groups)) {
         const displayName = columnMap[groupName] || groupName;
-        if (!['timestamp', 'level', 'pid', 'tid', 'source', 'message'].includes(groupName)) {
+        if (!['timestamp', 'level', 'pid', 'tid', 'thread', 'tag', 'source', 'message'].includes(groupName)) {
           entry.customFields[displayName] = value;
         }
       }
@@ -433,6 +493,9 @@ const LogParser = {
       } else if (lower === 'tid' || lower === 'threadid') {
         result.tid = groupName;
         result._tidVal = groups[groupName] || '';
+      } else if (lower === 'tag' || lower === 'label' || lower === 'category') {
+        result.tag = groupName;
+        result._tagVal = groups[groupName] || '';
       } else if (lower === 'source' || lower === 'logger' || lower === 'class' || lower === 'service') {
         result.source = groupName;
         result._sourceVal = groups[groupName] || '';
@@ -561,6 +624,7 @@ const SmartRuleGenerator = {
   datePatterns: [
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS ZZ' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS Z' },
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{3}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS Z' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss ZZ' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss Z' },
@@ -637,6 +701,11 @@ const SmartRuleGenerator = {
       return 'number';
     }
 
+    // 检测标签Tag：短字母数字token（非级别、非来源、非数字）
+    if (/^[a-zA-Z_][\w]*$/.test(trimmed) && trimmed.length >= 2 && trimmed.length <= 30) {
+      return 'tag';
+    }
+
     // 检测来源模式: filename:func:linenumber 或 package.Class
     if (/^[\w./-]+:[\w./-]+(:\d+)?$/.test(trimmed) && trimmed.length > 5) {
       return 'source';
@@ -678,6 +747,11 @@ const SmartRuleGenerator = {
 
       if (!this.assignments.source && token.type === 'source') {
         this.assignments.source = i;
+        continue;
+      }
+
+      if (!this.assignments.tag && token.type === 'tag') {
+        this.assignments.tag = i;
         continue;
       }
 
@@ -746,7 +820,7 @@ const SmartRuleGenerator = {
   // 根据分配生成正则表达式
   regenerateRegex() {
     const parts = [];
-    const fieldOrder = ['timestamp', 'level', 'pid', 'tid', 'source', 'message'];
+    const fieldOrder = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
     const assignedTokens = {};
 
     for (const [field, idx] of Object.entries(this.assignments)) {
@@ -844,6 +918,9 @@ const SmartRuleGenerator = {
       case 'tid':
         if (/^\[.+\]$/.test(text)) return '\\[\\d+\\]';
         return '\\d+';
+      case 'tag':
+        if (/^\[.+\]$/.test(text)) return '\\[[^\\]]+\\]';
+        return '\\w+';
       case 'source':
         return '[\\w./:-]+';
       case 'message':

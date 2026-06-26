@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simple HTTP server for LogViewPlus Web"""
+"""Simple HTTP server for Web log viewer's Web"""
 import http.server
 import socketserver
 import os
@@ -18,7 +18,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 if __name__ == '__main__':
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
         url = f"http://localhost:{PORT}"
-        print(f"LogViewPlus Web 已启动: {url}")
+        print(f"Web view logger's Web 已启动: {url}")
         print("按 Ctrl+C 停止服务器")
         try:
             webbrowser.open(url)
