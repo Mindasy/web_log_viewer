@@ -321,18 +321,53 @@ const LogGrid = {
     }, 100));
   },
 
+  // 锚点：记录最近一次渲染时 当前scrollTop ↔ 逻辑行号 的映射
+  _scrollAnchor: { cssScrollTop: 0, logicalRow: 0 },
+
+  // 锚点最大信任距离（CSS px），超过此值时用纯比例重新校准
+  _anchorMaxTrust: 3000,
+
+  get _cssHeight() {
+    return Math.min(this.totalRows * this.rowHeight, this.MAX_SAFE_PX);
+  },
+
+  get _cssRange() {
+    return Math.max(1, this._cssHeight - (this.gridBody.clientHeight || 1));
+  },
+
+  get _logicalRange() {
+    return Math.max(1, this.totalRows * this.rowHeight - (this.gridBody.clientHeight || 1));
+  },
+
   onScroll() {
     const newScrollTop = this.gridBody.scrollTop;
     const cssRowH = this._cssRowHeight();
+    const maxScroll = Math.max(0, this._cssHeight - (this.gridBody.clientHeight || 1));
+
+    if (newScrollTop <= 1) {
+      this.scrollTop = 0;
+      this._scrollAnchor = { cssScrollTop: 0, logicalRow: 0 };
+      this._onScrollFinish();
+      return;
+    }
+    if (newScrollTop >= maxScroll - 1) {
+      this.scrollTop = maxScroll;
+      this._scrollAnchor = { cssScrollTop: maxScroll, logicalRow: Math.max(0, this.totalRows - 1) };
+      this._onScrollFinish();
+      return;
+    }
+
     if (Math.abs(newScrollTop - this.scrollTop) < cssRowH) return;
     this.scrollTop = newScrollTop;
+    this._onScrollFinish();
+  },
+
+  _onScrollFinish() {
     this.render();
   },
 
   _cssRowHeight() {
-    const totalHeight = this.totalRows * this.rowHeight;
-    const cssHeight = Math.min(totalHeight, this.MAX_SAFE_PX);
-    return cssHeight / Math.max(1, this.totalRows);
+    return this._cssHeight / Math.max(1, this.totalRows);
   },
 
   calculateVisibleCount() {
@@ -345,19 +380,30 @@ const LogGrid = {
     this.scrollTop = 0;
     this.selectedIndex = entries.length > 0 ? 0 : -1;
     this.gridBody.scrollTop = 0;
+    this._scrollAnchor = { cssScrollTop: 0, logicalRow: 0 };
     this.render();
+    App.updateCurrentRow();
     this.updateStatusBar();
   },
 
-  // 将 scroll 比例映射为逻辑行号
+  // 通过锚点偏移估算逻辑行号（小滚动用），大滚动回退纯比例
   _cssToLogicalStart(cssScrollTop) {
-    const totalHeight = this.totalRows * this.rowHeight;
-    const clientH = this.gridBody.clientHeight || 1;
-    const cssHeight = Math.min(totalHeight, this.MAX_SAFE_PX);
-    const cssRange = Math.max(1, cssHeight - clientH);
-    const fraction = Math.min(1, Math.max(0, cssScrollTop / cssRange));
-    const logicalRange = Math.max(1, totalHeight - clientH);
-    const logicalScrollTop = fraction * logicalRange;
+    if (this.totalRows === 0) return 0;
+
+    const anchor = this._scrollAnchor;
+    const cssDelta = cssScrollTop - anchor.cssScrollTop;
+
+    // 滚动距离小 → 用锚点偏移推算（精度高）
+    if (Math.abs(cssDelta) < this._anchorMaxTrust) {
+      const avgCssRowH = this._cssRowHeight();
+      const rowDelta = Math.round(cssDelta / avgCssRowH);
+      const estimated = anchor.logicalRow + rowDelta;
+      return Math.max(0, Math.min(estimated, this.totalRows - 1));
+    }
+
+    // 滚动距离大 → 纯比例重新校准
+    const frac = Math.min(1, Math.max(0, cssScrollTop / this._cssRange));
+    const logicalScrollTop = frac * this._logicalRange;
     return Math.min(
       Math.max(0, Math.floor(logicalScrollTop / this.rowHeight)),
       Math.max(0, this.totalRows - 1)
@@ -366,14 +412,32 @@ const LogGrid = {
 
   // 将逻辑行号映射为 css scrollTop
   _logicalToCssScrollTop(displayIndex) {
-    const totalHeight = this.totalRows * this.rowHeight;
-    const clientH = this.gridBody.clientHeight || 1;
-    const logicalY = displayIndex * this.rowHeight;
-    const logicalRange = Math.max(1, totalHeight - clientH);
-    const fraction = Math.min(1, Math.max(0, logicalY / logicalRange));
-    const cssHeight = Math.min(totalHeight, this.MAX_SAFE_PX);
-    const cssRange = Math.max(1, cssHeight - clientH);
-    return fraction * cssRange;
+    const fraction = Math.min(1, Math.max(0, (displayIndex * this.rowHeight) / this._logicalRange));
+    return fraction * this._cssRange;
+  },
+
+  _updateScrollButtons() {
+    const maxScroll = Math.max(0, this._cssHeight - (this.gridBody.clientHeight || 1));
+    const btnTop = document.getElementById('btn-scroll-top');
+    const btnBottom = document.getElementById('btn-scroll-bottom');
+    if (!btnTop || !btnBottom) return;
+
+    if (this.totalRows === 0) {
+      btnTop.style.display = 'none';
+      btnBottom.style.display = 'none';
+      return;
+    }
+
+    btnTop.style.display = this.scrollTop <= 1 ? 'none' : 'flex';
+    btnBottom.style.display = this.scrollTop >= maxScroll - 1 ? 'none' : 'flex';
+  },
+
+  jumpToTop() {
+    this.selectRow(0);
+  },
+
+  jumpToBottom() {
+    this.selectRow(Math.max(0, this.totalRows - 1));
   },
 
   render() {
@@ -385,8 +449,7 @@ const LogGrid = {
       return;
     }
 
-    const totalHeight = this.totalRows * this.rowHeight;
-    const cssHeight = Math.min(totalHeight, this.MAX_SAFE_PX);
+    const cssHeight = this._cssHeight;
 
     // 通过 CSS scrollTop 比例映射到逻辑行号
     const start = this._cssToLogicalStart(this.scrollTop);
@@ -400,9 +463,13 @@ const LogGrid = {
 
     const fragment = document.createDocumentFragment();
 
-    // spacer 直接使用浏览器当前 scrollTop，保证无间隙
+    const rowsHeight = (end - start) * this.rowHeight;
+    const maxTopSpacerHeight = Math.max(0, cssHeight - rowsHeight);
+    const topSpacerHeight = Math.min(this.scrollTop, maxTopSpacerHeight);
+    const bottomSpacerHeight = Math.max(0, cssHeight - topSpacerHeight - rowsHeight);
+
     const topSpacer = document.createElement('div');
-    topSpacer.style.height = this.scrollTop + 'px';
+    topSpacer.style.height = topSpacerHeight + 'px';
     fragment.appendChild(topSpacer);
 
     for (let i = start; i < end; i++) {
@@ -411,8 +478,17 @@ const LogGrid = {
       fragment.appendChild(row);
     }
 
+    if (bottomSpacerHeight > 0) {
+      const bottomSpacer = document.createElement('div');
+      bottomSpacer.style.height = bottomSpacerHeight + 'px';
+      fragment.appendChild(bottomSpacer);
+    }
+
     this.viewport.textContent = '';
     this.viewport.appendChild(fragment);
+
+    // 更新锚点：记录当前位置 → 逻辑行号的映射
+    this._scrollAnchor = { cssScrollTop: this.scrollTop, logicalRow: start };
   },
 
   createRow(entry, displayIndex, hlCache) {
@@ -578,6 +654,7 @@ const LogGrid = {
 
     this.gridBody.scrollTop = this.scrollTop;
     this.render();
+    App.updateCurrentRow();
 
     if (displayIndex >= 0 && displayIndex < this.entries.length) {
       App.showDetail(this.entries[displayIndex]);

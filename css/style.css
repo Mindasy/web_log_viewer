@@ -282,6 +282,71 @@ html, body {
   max-width: 600px;
 }
 
+/* ===== Goto Row ===== */
+.goto-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.goto-row-cur {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.goto-row-sep {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 1px;
+}
+.goto-row-total {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 30px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.goto-row input {
+  width: 95px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  outline: none;
+  margin: 0 2px;
+}
+.goto-row input:focus {
+  border-color: var(--accent);
+}
+.goto-row-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-color);
+  margin: 0 2px;
+}
+.goto-nav-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.goto-nav-btn:hover {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
 /* ===== Log Panel ===== */
 #log-panel {
   flex: 1;
@@ -1600,36 +1665,6 @@ html, body {
 .fp-checkbox-label input[type="checkbox"] {
   accent-color: var(--accent);
 }
-
-/* ===== Go-to-line ===== */
-.goto-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 8px;
-}
-.goto-row input {
-  width: 80px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  padding: 3px 6px;
-  border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  outline: none;
-}
-.goto-row input:focus { border-color: var(--accent); }
-.goto-row button {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  padding: 3px 8px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 11px;
-}
-.goto-row button:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* ===== Pattern Manager ===== */
 #pattern-manager {

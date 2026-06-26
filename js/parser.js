@@ -569,9 +569,9 @@ const LogParser = {
             this.entries.forEach(e => {
               if (!e.sourceFile) e.sourceFile = file.name;
             });
-            allEntries.push(...this.entries);
-            allRawLines.push(...this.rawLines);
-            allSourceFiles.push(...this.sourceFiles);
+            for (let ei = 0; ei < this.entries.length; ei++) allEntries.push(this.entries[ei]);
+            for (let ri = 0; ri < this.rawLines.length; ri++) allRawLines.push(this.rawLines[ri]);
+            for (let si = 0; si < this.sourceFiles.length; si++) allSourceFiles.push(this.sourceFiles[si]);
           } finally {
             this.entries = savedEntries;
             this.rawLines = savedRaw;
@@ -600,7 +600,7 @@ const LogParser = {
               allEntries.push(entry);
             }
           }
-          allRawLines.push(...lines);
+          for (let li = 0; li < lines.length; li++) allRawLines.push(lines[li]);
           allSourceFiles.push({ name: file.name, size: file.size });
         }
       } catch (e) {
@@ -621,8 +621,17 @@ const LogParser = {
     }
 
     if (append && savedEntries.length > 0) {
-      allEntries.unshift(...savedEntries);
-      allRawLines.unshift(...savedRaw);
+      const tempEntries = [];
+      for (let i = 0; i < savedEntries.length; i++) tempEntries.push(savedEntries[i]);
+      for (let i = 0; i < allEntries.length; i++) tempEntries.push(allEntries[i]);
+      allEntries.length = 0;
+      for (let i = 0; i < tempEntries.length; i++) allEntries.push(tempEntries[i]);
+
+      const tempRaw = [];
+      for (let i = 0; i < savedRaw.length; i++) tempRaw.push(savedRaw[i]);
+      for (let i = 0; i < allRawLines.length; i++) tempRaw.push(allRawLines[i]);
+      allRawLines.length = 0;
+      for (let i = 0; i < tempRaw.length; i++) allRawLines.push(tempRaw[i]);
       for (const sf of savedSrc) {
         const exists = allSourceFiles.find(f => f.name === sf.name);
         if (!exists) allSourceFiles.push(sf);

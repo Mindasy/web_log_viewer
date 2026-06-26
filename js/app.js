@@ -84,8 +84,13 @@ const App = {
     document.getElementById('btn-bookmarks-panel').addEventListener('click', () => this.toggleBookmarksPanel());
 
     document.getElementById('btn-stats').addEventListener('click', () => this.toggleStatsPanel());
-
     document.getElementById('btn-timeline').addEventListener('click', () => this.toggleTimelinePanel());
+    document.getElementById('btn-scroll-top').addEventListener('click', () => LogGrid.jumpToTop());
+    document.getElementById('btn-scroll-bottom').addEventListener('click', () => LogGrid.jumpToBottom());
+    document.getElementById('goto-line-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.gotoLine();
+    });
+    document.getElementById('btn-goto-line').addEventListener('click', () => this.gotoLine());
 
     document.getElementById('btn-toggle-files').addEventListener('click', () => this.toggleFilesPanel());
     document.getElementById('btn-parser-config').addEventListener('click', () => this.showParserConfig());
@@ -207,15 +212,6 @@ const App = {
       this.refresh();
     });
 
-    // ===== 跳转到行 =====
-    const gotoInput = document.getElementById('goto-line-input');
-    gotoInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        this.gotoLine();
-      }
-    });
-    document.getElementById('btn-goto-line').addEventListener('click', () => this.gotoLine());
   },
 
   // ===== 主界面 Pattern 管理器 =====
@@ -1427,22 +1423,53 @@ const App = {
 
     const hasSearch = LogFilter.searchMatches.length > 0;
 
+    // $: 跳转到末行
+    if (val === '$') {
+      LogGrid.jumpToBottom();
+      input.value = '';
+      Utils.showToast(`已跳转到末行（原始行号 ${LogParser.entries.length}）`, 'success');
+      return;
+    }
+
+    // +N / -N: 相对偏移
+    if (val.startsWith('+') || val.startsWith('-')) {
+      const offset = parseInt(val, 10);
+      if (isNaN(offset) || offset === 0) {
+        Utils.showToast('请输入有效的偏移量，如 +10 或 -10', 'error');
+        return;
+      }
+      const curIdx = LogGrid.selectedIndex;
+      const targetIdx = Math.max(0, Math.min(curIdx + offset, LogParser.entries.length - 1));
+      LogGrid.selectRow(targetIdx);
+      const dir = offset > 0 ? '后' : '前';
+      Utils.showToast(`已向${dir}偏移 ${Math.abs(offset)} 行`, 'success');
+      return;
+    }
+
     if (val.startsWith('#')) {
-      // #N: 跳转到搜索结果中的第 N 个
-      if (!hasSearch) {
-        Utils.showToast('没有搜索结果', 'error');
-        return;
-      }
       const searchIdx = parseInt(val.substring(1), 10);
-      if (isNaN(searchIdx) || searchIdx < 1 || searchIdx > LogFilter.searchMatches.length) {
-        Utils.showToast(`搜索结果序号无效 (1-${LogFilter.searchMatches.length})`, 'error');
+      if (hasSearch && !isNaN(searchIdx) && searchIdx >= 1 && searchIdx <= LogFilter.searchMatches.length) {
+        LogFilter.currentMatchIndex = searchIdx - 1;
+        const entry = LogFilter.searchMatches[searchIdx - 1];
+        LogGrid.scrollToEntry(entry);
+        this.updateSearchStats();
+        Utils.showToast(`已跳转到第 ${searchIdx} 个搜索结果（原始行号 ${entry.index + 1}）`, 'success');
+        input.value = '';
         return;
       }
-      LogFilter.currentMatchIndex = searchIdx - 1;
-      const entry = LogFilter.searchMatches[searchIdx - 1];
+      const lineNum = parseInt(val.substring(1), 10);
+      if (isNaN(lineNum) || lineNum < 1) {
+        Utils.showToast('请输入有效的行号', 'error');
+        return;
+      }
+      const entry = LogParser.entries.find(e => (e.index + 1) === lineNum);
+      if (!entry) {
+        Utils.showToast(`未找到原始行号 ${lineNum}（有效范围 1-${LogParser.entries.length}）`, 'error');
+        return;
+      }
       LogGrid.scrollToEntry(entry);
-      this.updateSearchStats();
-      Utils.showToast(`已跳转到第 ${searchIdx} 个搜索结果（原始行号 ${entry.index + 1}）`, 'success');
+      Utils.showToast(`已跳转到原始行号 ${lineNum}`, 'success');
+      input.value = '';
       return;
     }
 
@@ -1460,6 +1487,7 @@ const App = {
       const entry = this.bookmarks[bmIdx - 1];
       LogGrid.scrollToEntry(entry);
       Utils.showToast(`已跳转到第 ${bmIdx} 个书签（原始行号 ${entry.index + 1}）`, 'success');
+      input.value = '';
       return;
     }
 
@@ -1470,7 +1498,6 @@ const App = {
     }
 
     if (hasSearch) {
-      // 有搜索结果时：按原始行号在搜索结果中查找
       const matchIdx = LogFilter.searchMatches.findIndex(e => (e.index + 1) === lineNum);
       if (matchIdx === -1) {
         Utils.showToast(`搜索结果中未找到原始行号 ${lineNum}`, 'error');
@@ -1481,8 +1508,8 @@ const App = {
       LogGrid.scrollToEntry(entry);
       this.updateSearchStats();
       Utils.showToast(`已跳转到原始行号 ${lineNum}（搜索结果第 ${matchIdx + 1}/${LogFilter.searchMatches.length} 个）`, 'success');
+      input.value = '';
     } else {
-      // 无搜索结果时：按原始行号在全量数据中查找
       const entry = LogParser.entries.find(e => (e.index + 1) === lineNum);
       if (!entry) {
         Utils.showToast(`未找到原始行号 ${lineNum}（有效范围 1-${LogParser.entries.length}）`, 'error');
@@ -1490,6 +1517,7 @@ const App = {
       }
       LogGrid.scrollToEntry(entry);
       Utils.showToast(`已跳转到原始行号 ${lineNum}`, 'success');
+      input.value = '';
     }
   },
 
@@ -1502,6 +1530,19 @@ const App = {
     } else {
       stats.textContent = '';
     }
+  },
+
+  updateCurrentRow() {
+    const cur = document.getElementById('goto-row-cur');
+    const total = document.getElementById('goto-row-total');
+    if (!cur || !total) return;
+    if (LogGrid.totalRows === 0 || LogGrid.selectedIndex < 0) {
+      cur.textContent = '-';
+      total.textContent = '-';
+      return;
+    }
+    cur.textContent = LogGrid.selectedIndex + 1;
+    total.textContent = LogGrid.totalRows;
   },
 
   // ===== 更新文件信息 =====
