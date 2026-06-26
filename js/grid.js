@@ -17,6 +17,27 @@ const LogGrid = {
   entries: [],
   selectedIndex: -1,
 
+  // 列定义
+  columnDefs: [
+    { key: 'index',     label: '#',     className: 'col-index',       minWidth: 60,  canHide: false },
+    { key: 'bookmark',  label: '🔖',    className: 'col-bookmark',    minWidth: 32,  canHide: true },
+    { key: 'timestamp', label: '时间戳', className: 'col-timestamp',   minWidth: 100, canHide: true },
+    { key: 'level',     label: '级别',   className: 'col-level',       minWidth: 60,  canHide: true },
+    { key: 'pid',       label: '进程ID', className: 'col-pid',         minWidth: 60,  canHide: true },
+    { key: 'tid',       label: '线程ID', className: 'col-tid',         minWidth: 60,  canHide: true },
+    { key: 'source',    label: '来源',   className: 'col-source',      minWidth: 80,  canHide: true },
+    { key: 'message',   label: '消息',   className: 'col-message',     minWidth: 120, canHide: true },
+  ],
+
+  // 列隐藏状态
+  hiddenColumns: new Set(),
+
+  // 自定义列宽
+  columnWidths: {},
+
+  // 拖拽调整状态
+  _headerResizeBound: false,
+
   // 初始化
   init() {
     this.viewport = document.getElementById('grid-viewport');
@@ -24,16 +45,187 @@ const LogGrid = {
     this.header = document.getElementById('grid-header');
     this.bindEvents();
     this.calculateVisibleCount();
+    this.renderHeader();
+  },
+
+  // 列头是否可见
+  isColumnVisible(key) {
+    const def = this.columnDefs.find(d => d.key === key);
+    if (!def || !def.canHide) return true;
+    return !this.hiddenColumns.has(key);
+  },
+
+  // 渲染列头
+  renderHeader() {
+    this.header.textContent = '';
+    for (const def of this.columnDefs) {
+      if (!this.isColumnVisible(def.key)) continue;
+      const col = document.createElement('div');
+      col.className = `col ${def.className}`;
+      col.dataset.col = def.key;
+      const w = this.columnWidths[def.key];
+      if (w) {
+        col.style.width = w + 'px';
+        col.style.minWidth = w + 'px';
+        if (def.key !== 'message') col.style.flex = 'none';
+      }
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'col-label';
+      labelSpan.textContent = def.label;
+
+      // 用于 bookmark 列和图标的列用 textContent，避免事件冲突
+      col.appendChild(labelSpan);
+
+      // 可隐藏列添加右键菜单
+      if (def.canHide) {
+        col.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          this.showColumnMenu(e, def.key);
+        });
+      }
+
+      // 排序点击
+      if (def.key !== 'bookmark') {
+        col.addEventListener('click', (e) => {
+          if (e.target.closest('.col-resizer')) return;
+          const colName = col.dataset.col;
+          if (LogFilter.state.sortColumn === colName) {
+            LogFilter.state.sortDirection = LogFilter.state.sortDirection === 'asc' ? 'desc' : 'asc';
+          } else {
+            LogFilter.state.sortColumn = colName;
+            LogFilter.state.sortDirection = 'asc';
+          }
+          this.header.querySelectorAll('.col').forEach(c => c.classList.remove('sorted'));
+          col.classList.add('sorted');
+          App.refresh();
+        });
+      }
+
+      // 添加拖拽调整手柄（index 和 bookmark 列不允许拖拽）
+      if (def.key !== 'index' && def.key !== 'bookmark') {
+        const resizer = document.createElement('div');
+        resizer.className = 'col-resizer';
+        resizer.dataset.col = def.key;
+        col.appendChild(resizer);
+      }
+
+      this.header.appendChild(col);
+    }
+    this.bindResizeEvents();
+  },
+
+  // 绑定拖拽事件
+  bindResizeEvents() {
+    if (this._headerResizeBound) return;
+    this._headerResizeBound = true;
+
+    this.header.addEventListener('mousedown', (e) => {
+      const resizer = e.target.closest('.col-resizer');
+      if (!resizer) return;
+      e.preventDefault();
+      const colKey = resizer.dataset.col;
+      const colEl = resizer.parentElement;
+      const startX = e.clientX;
+      const startWidth = colEl.offsetWidth;
+      const def = this.columnDefs.find(d => d.key === colKey);
+      const minW = def ? def.minWidth : 40;
+
+      const onMove = (ev) => {
+        const diff = ev.clientX - startX;
+        const newW = Math.max(minW, startWidth + diff);
+        colEl.style.width = newW + 'px';
+        colEl.style.minWidth = newW + 'px';
+        if (colKey !== 'message') colEl.style.flex = 'none';
+        this.columnWidths[colKey] = newW;
+        this.header.querySelectorAll(`.col.${def.className}`).forEach(el => {
+          el.style.width = newW + 'px';
+          el.style.minWidth = newW + 'px';
+        });
+      };
+
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        this.render();
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+  },
+
+  // 列上下文菜单
+  showColumnMenu(e, key) {
+    const existing = document.getElementById('column-context-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'column-context-menu';
+    menu.className = 'column-context-menu';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+
+    for (const def of this.columnDefs) {
+      if (!def.canHide) {
+        const item = document.createElement('div');
+        item.className = 'ctx-item ctx-item-disabled';
+        item.textContent = `${def.label} (固定)`;
+        menu.appendChild(item);
+        continue;
+      }
+      const item = document.createElement('div');
+      item.className = 'ctx-item';
+      const hidden = this.hiddenColumns.has(def.key);
+      item.textContent = `${hidden ? '☐' : '☑'} ${def.label}`;
+      item.addEventListener('click', () => {
+        if (hidden) {
+          this.hiddenColumns.delete(def.key);
+        } else {
+          this.hiddenColumns.add(def.key);
+        }
+        this.renderHeader();
+        this.render();
+        menu.remove();
+      });
+      menu.appendChild(item);
+    }
+
+    const sep = document.createElement('div');
+    sep.className = 'ctx-separator';
+    menu.appendChild(sep);
+
+    const showAll = document.createElement('div');
+    showAll.className = 'ctx-item';
+    showAll.textContent = '☑ 显示全部';
+    showAll.addEventListener('click', () => {
+      this.hiddenColumns.clear();
+      this.renderHeader();
+      this.render();
+      menu.remove();
+    });
+    menu.appendChild(showAll);
+
+    document.body.appendChild(menu);
+
+    const close = (ev) => {
+      if (!menu.contains(ev.target)) {
+        menu.remove();
+        document.removeEventListener('click', close);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close), 0);
   },
 
   // 绑定事件
   bindEvents() {
-    // 使用 grid-body 原生滚动
     this.gridBody.addEventListener('scroll', () => {
       this.onScroll();
     });
 
-    // 键盘导航
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (this.totalRows === 0) return;
@@ -66,24 +258,6 @@ const LogGrid = {
       }
     });
 
-    // 列头排序
-    this.header.querySelectorAll('.col').forEach(col => {
-      col.addEventListener('click', () => {
-        const colName = col.dataset.col;
-        if (colName === 'bookmark') return;
-        if (LogFilter.state.sortColumn === colName) {
-          LogFilter.state.sortDirection = LogFilter.state.sortDirection === 'asc' ? 'desc' : 'asc';
-        } else {
-          LogFilter.state.sortColumn = colName;
-          LogFilter.state.sortDirection = 'asc';
-        }
-        this.header.querySelectorAll('.col').forEach(c => c.classList.remove('sorted'));
-        col.classList.add('sorted');
-        App.refresh();
-      });
-    });
-
-    // 窗口大小变化
     window.addEventListener('resize', Utils.debounce(() => {
       this.calculateVisibleCount();
       this.render();
@@ -93,7 +267,7 @@ const LogGrid = {
   // 滚动事件处理
   onScroll() {
     const newScrollTop = this.gridBody.scrollTop;
-    if (Math.abs(newScrollTop - this.scrollTop) < this.rowHeight) return; // 滚动距离不够一行，跳过
+    if (Math.abs(newScrollTop - this.scrollTop) < this.rowHeight) return;
     this.scrollTop = newScrollTop;
     this.render();
   },
@@ -129,31 +303,30 @@ const LogGrid = {
     const end = Math.min(start + this.visibleCount + 5, this.totalRows);
     this.renderedRange = { start, end };
 
-    // 设置 viewport 总高度，撑开原生滚动条
     this.viewport.style.height = totalHeight + 'px';
 
-    // 构建新内容
+    // 批量预计算可见行的高亮（一次正则编译，重用所有行）
+    const hlCache = LogFilter.state.highlight && LogFilter.state.searchText
+      ? LogFilter.computeBatchHighlights(this.entries, start, end) : null;
+
     const fragment = document.createDocumentFragment();
 
-    // 顶部占位
     const topSpacer = document.createElement('div');
     topSpacer.style.height = (start * this.rowHeight) + 'px';
     fragment.appendChild(topSpacer);
 
-    // 渲染可见行
     for (let i = start; i < end; i++) {
       const entry = this.entries[i];
-      const row = this.createRow(entry, i);
+      const row = this.createRow(entry, i, hlCache);
       fragment.appendChild(row);
     }
 
-    // 替换内容（保持 viewport 高度不变，滚动位置由 grid-body 维护）
     this.viewport.textContent = '';
     this.viewport.appendChild(fragment);
   },
 
   // 创建行
-  createRow(entry, displayIndex) {
+  createRow(entry, displayIndex, hlCache) {
     const row = document.createElement('div');
     row.className = 'grid-row';
     row.dataset.index = entry.index;
@@ -166,61 +339,91 @@ const LogGrid = {
       row.classList.add('bookmarked');
     }
 
-    // 索引列
-    const colIndex = document.createElement('div');
-    colIndex.className = 'col col-index';
-    colIndex.textContent = entry.index + 1;
-    row.appendChild(colIndex);
+    // 索引列（不可隐藏）
+    {
+      const col = document.createElement('div');
+      col.className = 'col col-index';
+      col.textContent = entry.index + 1;
+      const w = this.columnWidths['index'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
     // 书签列
-    const colBookmark = document.createElement('div');
-    colBookmark.className = 'col col-bookmark';
-    colBookmark.textContent = entry.bookmarked ? '🔖' : '';
-    row.appendChild(colBookmark);
+    if (this.isColumnVisible('bookmark')) {
+      const col = document.createElement('div');
+      col.className = 'col col-bookmark';
+      col.textContent = entry.bookmarked ? '🔖' : '';
+      const w = this.columnWidths['bookmark'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
     // 时间戳列
-    const colTs = document.createElement('div');
-    colTs.className = 'col col-timestamp';
-    colTs.textContent = entry.timestamp || '-';
-    row.appendChild(colTs);
+    if (this.isColumnVisible('timestamp')) {
+      const col = document.createElement('div');
+      col.className = 'col col-timestamp';
+      col.innerHTML = this._hlText(entry.timestamp || '-', 'timestamp', entry.index, hlCache);
+      const w = this.columnWidths['timestamp'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
     // 级别列
-    const colLevel = document.createElement('div');
-    colLevel.className = `col col-level level-${entry.level}`;
-    colLevel.textContent = entry.level || '-';
-    row.appendChild(colLevel);
+    if (this.isColumnVisible('level')) {
+      const col = document.createElement('div');
+      col.className = `col col-level level-${entry.level}`;
+      col.innerHTML = this._hlText(entry.level || '-', 'level', entry.index, hlCache);
+      const w = this.columnWidths['level'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
     // 进程ID列
-    const colPid = document.createElement('div');
-    colPid.className = 'col col-pid';
-    colPid.textContent = entry.pid || '-';
-    row.appendChild(colPid);
+    if (this.isColumnVisible('pid')) {
+      const col = document.createElement('div');
+      col.className = 'col col-pid';
+      col.innerHTML = this._hlText(entry.pid || '-', 'pid', entry.index, hlCache);
+      const w = this.columnWidths['pid'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
     // 线程ID列
-    const colTid = document.createElement('div');
-    colTid.className = 'col col-tid';
-    colTid.textContent = entry.tid || '-';
-    row.appendChild(colTid);
+    if (this.isColumnVisible('tid')) {
+      const col = document.createElement('div');
+      col.className = 'col col-tid';
+      col.innerHTML = this._hlText(entry.tid || '-', 'tid', entry.index, hlCache);
+      const w = this.columnWidths['tid'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
     // 来源列
-    const colSource = document.createElement('div');
-    colSource.className = 'col col-source';
-    colSource.textContent = entry.source || '-';
-    row.appendChild(colSource);
+    if (this.isColumnVisible('source')) {
+      const col = document.createElement('div');
+      col.className = 'col col-source';
+      col.innerHTML = this._hlText(entry.source || '-', 'source', entry.index, hlCache);
+      const w = this.columnWidths['source'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
-    // 消息列（带高亮）
-    const colMsg = document.createElement('div');
-    colMsg.className = 'col col-message';
-    colMsg.innerHTML = this.highlightText(entry.message || entry.raw);
-    row.appendChild(colMsg);
+    // 消息列
+    if (this.isColumnVisible('message')) {
+      const col = document.createElement('div');
+      col.className = 'col col-message';
+      col.innerHTML = this._hlText(entry.message || entry.raw, 'message', entry.index, hlCache);
+      const w = this.columnWidths['message'];
+      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
+      row.appendChild(col);
+    }
 
-    // 点击事件
     row.addEventListener('click', () => {
       this.selectRow(displayIndex);
       App.showDetail(entry);
     });
 
-    // 双击 - 切换书签
     row.addEventListener('dblclick', () => {
       App.toggleBookmark(entry);
     });
@@ -228,12 +431,20 @@ const LogGrid = {
     return row;
   },
 
-  // 高亮文本
-  highlightText(text) {
+  // 使用缓存高亮文本（无需正则执行，直接按位置切割）
+  _hlText(text, field, entryIndex, hlCache) {
     if (!text) return '';
-    const highlights = LogFilter.getHighlights(text);
-    if (highlights.length === 0) return this.escapeHtml(text);
-
+    if (!hlCache || !LogFilter.state.highlight || !LogFilter.state.searchText) {
+      return this.escapeHtml(text);
+    }
+    if (LogFilter.state.highlightFields[field] === false) {
+      return this.escapeHtml(text);
+    }
+    const entryHl = hlCache[entryIndex];
+    if (!entryHl || !entryHl[field]) {
+      return this.escapeHtml(text);
+    }
+    const highlights = entryHl[field];
     let result = '';
     let lastEnd = 0;
     for (const h of highlights) {
@@ -256,7 +467,6 @@ const LogGrid = {
     if (displayIndex < 0 || displayIndex >= this.totalRows) return;
     this.selectedIndex = displayIndex;
 
-    // 确保选中行可见
     const rowTop = displayIndex * this.rowHeight;
     const rowBottom = rowTop + this.rowHeight;
     const viewTop = this.scrollTop;
@@ -269,11 +479,9 @@ const LogGrid = {
       this.scrollTop = Math.min(rowBottom - this.gridBody.clientHeight, maxScroll);
     }
 
-    // 同步原生滚动位置
     this.gridBody.scrollTop = this.scrollTop;
     this.render();
 
-    // 更新详情
     if (displayIndex >= 0 && displayIndex < this.entries.length) {
       App.showDetail(this.entries[displayIndex]);
     }
@@ -302,5 +510,10 @@ const LogGrid = {
   refresh() {
     const filtered = LogFilter.apply(LogParser.entries);
     this.setData(filtered);
+  },
+
+  // 获取可见列配置列表
+  getVisibleColumnDefs() {
+    return this.columnDefs.filter(d => this.isColumnVisible(d.key));
   }
 };

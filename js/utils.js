@@ -94,8 +94,8 @@ const Utils = {
 
   closeAllPanels() {
     document.querySelectorAll('.popup-panel').forEach(p => (p.style.display = 'none'));
-    // 也关闭非 popup-panel 类的独立面板
-    const extraPanels = ['pattern-manager-main', 'pattern-save-panel', 'pattern-manager'];
+    const extraPanels = ['pattern-manager-main', 'pattern-save-panel', 'pattern-manager',
+      'highlight-settings-panel', 'column-settings-panel'];
     extraPanels.forEach(id => {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
@@ -113,11 +113,11 @@ const Utils = {
     URL.revokeObjectURL(url);
   },
 
-  // 复制到剪贴板
-  async copyToClipboard(text) {
+  // 复制到剪贴板（label 可选，用于显示友好的提示）
+  async copyToClipboard(text, label) {
     try {
       await navigator.clipboard.writeText(text);
-      Utils.showToast('已复制到剪贴板', 'success');
+      Utils.showToast(label ? `已复制 ${label}` : '已复制到剪贴板', 'success');
     } catch {
       const ta = document.createElement('textarea');
       ta.value = text;
@@ -127,7 +127,7 @@ const Utils = {
       ta.select();
       document.execCommand('copy');
       ta.remove();
-      Utils.showToast('已复制到剪贴板', 'success');
+      Utils.showToast(label ? `已复制 ${label}` : '已复制到剪贴板', 'success');
     }
   },
 

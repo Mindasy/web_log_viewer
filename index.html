@@ -26,6 +26,7 @@
     <button id="btn-timeline" title="时间线视图">📈 时间线</button>
     <span class="separator"></span>
     <button id="btn-toggle-files" title="显示/隐藏文件列表">📁 文件</button>
+    <button id="btn-column-settings" title="列设置">📊 列</button>
     <span class="separator"></span>
     <button id="btn-parser-config" title="解析器配置">⚙️ 解析器</button>
     <button id="btn-open-pm-main" title="Pattern 管理">📋 Pattern</button>
@@ -45,7 +46,7 @@
       <button id="btn-regex" class="toggle-btn" title="启用正则表达式">.*</button>
       <button id="btn-case-sensitive" class="toggle-btn" title="区分大小写">Aa</button>
       <button id="btn-whole-word" class="toggle-btn" title="全词匹配">W</button>
-      <button id="btn-highlight" class="toggle-btn active" title="高亮匹配">🖍️</button>
+      <button id="btn-highlight" class="toggle-btn active" title="高亮匹配 (Alt+点击打开设置)">🖍️</button>
       <span id="search-stats" class="search-stats"></span>
       <span class="goto-row">
         <span style="font-size:10px;color:var(--text-muted)">跳转到</span>
@@ -110,34 +111,55 @@
     <div id="detail-content">
       <div class="detail-field">
         <label>时间戳</label>
-        <span id="detail-timestamp">-</span>
+        <div class="detail-value-wrap">
+          <span class="detail-value" id="detail-timestamp">-</span>
+          <button class="btn-copy-field" data-field="timestamp" data-label="时间戳" title="复制时间戳">📋</button>
+        </div>
       </div>
       <div class="detail-field">
         <label>级别</label>
-        <span id="detail-level">-</span>
+        <div class="detail-value-wrap">
+          <span class="detail-value" id="detail-level">-</span>
+          <button class="btn-copy-field" data-field="level" data-label="级别" title="复制级别">📋</button>
+        </div>
       </div>
       <div class="detail-field">
         <label>进程ID</label>
-        <span id="detail-pid">-</span>
+        <div class="detail-value-wrap">
+          <span class="detail-value" id="detail-pid">-</span>
+          <button class="btn-copy-field" data-field="pid" data-label="进程ID" title="复制进程ID">📋</button>
+        </div>
       </div>
       <div class="detail-field">
         <label>线程ID</label>
-        <span id="detail-tid">-</span>
+        <div class="detail-value-wrap">
+          <span class="detail-value" id="detail-tid">-</span>
+          <button class="btn-copy-field" data-field="tid" data-label="线程ID" title="复制线程ID">📋</button>
+        </div>
       </div>
       <div class="detail-field">
         <label>来源</label>
-        <span id="detail-source">-</span>
+        <div class="detail-value-wrap">
+          <span class="detail-value" id="detail-source">-</span>
+          <button class="btn-copy-field" data-field="source" data-label="来源" title="复制来源">📋</button>
+        </div>
       </div>
       <div class="detail-field">
         <label>消息</label>
-        <pre id="detail-message">-</pre>
+        <div class="detail-value-wrap">
+          <pre class="detail-value" id="detail-message">-</pre>
+          <button class="btn-copy-field" data-field="message" data-label="消息" title="复制消息">📋</button>
+        </div>
       </div>
       <div class="detail-field">
         <label>原始行</label>
-        <pre id="detail-raw">-</pre>
+        <div class="detail-value-wrap">
+          <pre class="detail-value" id="detail-raw">-</pre>
+          <button class="btn-copy-field" data-field="raw" data-label="原始行" title="复制原始行">📋</button>
+        </div>
       </div>
       <div class="detail-actions">
-        <button id="btn-copy-entry">📋 复制</button>
+        <button id="btn-copy-entry">📋 复制整行</button>
         <button id="btn-filter-similar">🔍 过滤相似</button>
         <button id="btn-toggle-bookmark">🔖 书签</button>
       </div>
@@ -201,6 +223,58 @@
   </div>
   <canvas id="timeline-canvas"></canvas>
   <div id="timeline-tooltip" style="display:none;"></div>
+</div>
+
+<!-- 高亮设置面板 (弹出) -->
+<div id="highlight-settings-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>🖍️ 高亮设置</span>
+    <button id="btn-close-highlight-settings">✕</button>
+  </div>
+  <div id="highlight-settings-content">
+    <div class="hs-section">
+      <div class="hs-row">
+        <label class="hs-toggle">
+          <input type="checkbox" id="hs-enabled" checked>
+          <span>启用高亮</span>
+        </label>
+      </div>
+    </div>
+    <div class="hs-section">
+      <h3>高亮字段</h3>
+      <div id="hs-field-list">
+        <label class="hs-field"><input type="checkbox" data-field="timestamp" checked> 时间戳</label>
+        <label class="hs-field"><input type="checkbox" data-field="level" checked> 级别</label>
+        <label class="hs-field"><input type="checkbox" data-field="pid" checked> 进程ID</label>
+        <label class="hs-field"><input type="checkbox" data-field="tid" checked> 线程ID</label>
+        <label class="hs-field"><input type="checkbox" data-field="source" checked> 来源</label>
+        <label class="hs-field"><input type="checkbox" data-field="message" checked> 消息</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 列设置面板 (弹出) -->
+<div id="column-settings-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>📊 列设置</span>
+    <button id="btn-close-column-settings">✕</button>
+  </div>
+  <div id="column-settings-content">
+    <div class="cs-section">
+      <div class="cs-hint">勾选要显示的列（序号列固定显示）</div>
+      <div id="cs-column-list">
+        <label class="cs-column cs-disabled"><input type="checkbox" checked disabled> # (序号) - 固定</label>
+        <label class="cs-column" data-col="bookmark"><input type="checkbox" checked> 🔖 书签</label>
+        <label class="cs-column" data-col="timestamp"><input type="checkbox" checked> 时间戳</label>
+        <label class="cs-column" data-col="level"><input type="checkbox" checked> 级别</label>
+        <label class="cs-column" data-col="pid"><input type="checkbox" checked> 进程ID</label>
+        <label class="cs-column" data-col="tid"><input type="checkbox" checked> 线程ID</label>
+        <label class="cs-column" data-col="source"><input type="checkbox" checked> 来源</label>
+        <label class="cs-column" data-col="message"><input type="checkbox" checked> 消息</label>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 解析器配置面板 -->

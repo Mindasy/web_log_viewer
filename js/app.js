@@ -90,6 +90,7 @@ const App = {
     document.getElementById('btn-toggle-files').addEventListener('click', () => this.toggleFilesPanel());
     document.getElementById('btn-parser-config').addEventListener('click', () => this.showParserConfig());
     document.getElementById('btn-open-pm-main').addEventListener('click', () => this.openMainPatternManager());
+    document.getElementById('btn-column-settings').addEventListener('click', () => this.toggleColumnSettings());
 
     document.getElementById('btn-close-files').addEventListener('click', () => {
       document.getElementById('files-panel').classList.remove('expanded');
@@ -119,7 +120,7 @@ const App = {
       LogFilter.state.searchText = searchInput.value;
       LogFilter.resetSearch();
       this.refresh();
-    }, 200));
+    }, LogParser.entries.length > 50000 ? 400 : 200));
 
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -150,7 +151,11 @@ const App = {
 
     toggleBtns.forEach(({ id, key }) => {
       const btn = document.getElementById(id);
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        if (key === 'highlight' && (e.shiftKey || e.altKey)) {
+          App.toggleHighlightSettings();
+          return;
+        }
         LogFilter.state[key] = !LogFilter.state[key];
         btn.classList.toggle('active', LogFilter.state[key]);
         LogFilter.resetSearch();
@@ -450,6 +455,18 @@ const App = {
       if (raw && raw !== '-') Utils.copyToClipboard(raw);
     });
 
+    // 字段独立复制：事件委托
+    document.getElementById('detail-content').addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-copy-field');
+      if (!btn) return;
+      const valueEl = btn.parentElement.querySelector('.detail-value');
+      if (!valueEl) return;
+      const text = valueEl.textContent;
+      if (!text || text === '-') return;
+      const label = btn.dataset.label || btn.dataset.field || '字段';
+      Utils.copyToClipboard(text, label);
+    });
+
     document.getElementById('btn-filter-similar').addEventListener('click', () => {
       const selected = this.getSelectedEntry();
       if (selected) {
@@ -520,6 +537,41 @@ const App = {
     document.getElementById('btn-close-timeline').addEventListener('click', () => {
       document.getElementById('timeline-panel').style.display = 'none';
       Utils.hideOverlay();
+    });
+
+    // 高亮设置面板
+    document.getElementById('btn-close-highlight-settings').addEventListener('click', () => {
+      document.getElementById('highlight-settings-panel').style.display = 'none';
+      Utils.hideOverlay();
+    });
+    document.getElementById('hs-enabled').addEventListener('change', (e) => {
+      LogFilter.state.highlight = e.target.checked;
+      App.refresh();
+    });
+    document.querySelectorAll('#hs-field-list input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const field = e.target.dataset.field;
+        LogFilter.state.highlightFields[field] = e.target.checked;
+        App.refresh();
+      });
+    });
+
+    // 列设置面板
+    document.getElementById('btn-close-column-settings').addEventListener('click', () => {
+      document.getElementById('column-settings-panel').style.display = 'none';
+      Utils.hideOverlay();
+    });
+    document.querySelectorAll('#cs-column-list .cs-column[data-col] input').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const col = e.target.closest('.cs-column').dataset.col;
+        if (e.target.checked) {
+          LogGrid.hiddenColumns.delete(col);
+        } else {
+          LogGrid.hiddenColumns.add(col);
+        }
+        LogGrid.renderHeader();
+        App.refresh();
+      });
     });
 
     // 解析器配置面板
@@ -929,15 +981,30 @@ const App = {
   // ===== 文件操作 =====
   async openFiles(files) {
     if (!files || files.length === 0) return;
-    // 弹出解析向导
-    this.pendingFiles = Array.from(files);
+    const arr = Array.from(files);
+
+    // 如果已有数据，直接合并（使用当前解析配置），跳过向导
+    if (LogParser.entries.length > 0) {
+      Utils.showLoading('正在合并文件...');
+      try {
+        await LogParser.mergeFiles(arr, {}, true);
+        this.onDataLoaded();
+      } catch (err) {
+        Utils.showToast('合并失败: ' + err.message, 'error');
+      }
+      Utils.hideLoading();
+      return;
+    }
+
+    // 首次打开：弹出解析向导
+    this.pendingFiles = arr;
     ParseWizard.show(this.pendingFiles);
   },
 
   async mergeFiles(files) {
     Utils.showLoading('正在合并日志文件...');
     try {
-      await LogParser.mergeFiles(Array.from(files));
+      await LogParser.mergeFiles(Array.from(files), {}, LogParser.entries.length > 0);
       this.onDataLoaded();
     } catch (err) {
       Utils.showToast('合并失败: ' + err.message, 'error');
@@ -1449,6 +1516,39 @@ const App = {
     panel.classList.toggle('expanded');
     if (panel.classList.contains('expanded')) {
       this.renderFilesList();
+    }
+  },
+
+  // ===== 高亮设置面板 =====
+  toggleHighlightSettings() {
+    const panel = document.getElementById('highlight-settings-panel');
+    if (panel.style.display === 'none' || !panel.style.display) {
+      document.getElementById('hs-enabled').checked = LogFilter.state.highlight;
+      document.querySelectorAll('#hs-field-list input[type="checkbox"]').forEach(cb => {
+        const field = cb.dataset.field;
+        cb.checked = LogFilter.state.highlightFields[field] !== false;
+      });
+      panel.style.display = 'flex';
+      Utils.showOverlay();
+    } else {
+      panel.style.display = 'none';
+      Utils.hideOverlay();
+    }
+  },
+
+  // ===== 列设置面板 =====
+  toggleColumnSettings() {
+    const panel = document.getElementById('column-settings-panel');
+    if (panel.style.display === 'none' || !panel.style.display) {
+      document.querySelectorAll('#cs-column-list .cs-column[data-col] input').forEach(cb => {
+        const col = cb.closest('.cs-column').dataset.col;
+        cb.checked = !LogGrid.hiddenColumns.has(col);
+      });
+      panel.style.display = 'flex';
+      Utils.showOverlay();
+    } else {
+      panel.style.display = 'none';
+      Utils.hideOverlay();
     }
   },
 
