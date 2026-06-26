@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LogViewPlus Web - 日志解析器</title>
+<title>Web log viewer - 日志解析器</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -26,6 +26,9 @@
     <button id="btn-timeline" title="时间线视图">📈 时间线</button>
     <span class="separator"></span>
     <button id="btn-toggle-files" title="显示/隐藏文件列表">📁 文件</button>
+    <span class="separator"></span>
+    <button id="btn-parser-config" title="解析器配置">⚙️ 解析器</button>
+    <button id="btn-open-pm-main" title="Pattern 管理">📋 Pattern</button>
   </div>
   <div class="toolbar-group toolbar-right">
     <span id="status-text" class="status-text">就绪</span>
@@ -87,7 +90,8 @@
       <div class="col col-bookmark" data-col="bookmark">🔖</div>
       <div class="col col-timestamp" data-col="timestamp">时间戳</div>
       <div class="col col-level" data-col="level">级别</div>
-      <div class="col col-thread" data-col="thread">线程</div>
+      <div class="col col-pid" data-col="pid">进程ID</div>
+      <div class="col col-tid" data-col="tid">线程ID</div>
       <div class="col col-source" data-col="source">来源</div>
       <div class="col col-message" data-col="message">消息</div>
     </div>
@@ -113,8 +117,12 @@
         <span id="detail-level">-</span>
       </div>
       <div class="detail-field">
-        <label>线程</label>
-        <span id="detail-thread">-</span>
+        <label>进程ID</label>
+        <span id="detail-pid">-</span>
+      </div>
+      <div class="detail-field">
+        <label>线程ID</label>
+        <span id="detail-tid">-</span>
       </div>
       <div class="detail-field">
         <label>来源</label>
@@ -297,7 +305,7 @@
     <!-- 自定义正则 (保留) -->
     <div class="config-section" id="custom-regex-section" style="display:none;">
       <label>自定义正则表达式</label>
-      <input type="text" id="custom-regex" placeholder="例如: (?&lt;timestamp&gt;\d{4}-\d{2}-\d{2}...)" />
+      <textarea id="custom-regex" rows="3" class="wizard-regex-textarea" placeholder="例如: (?&lt;timestamp&gt;\d{4}-\d{2}-\d{2}...)"></textarea>
       <label>日期格式</label>
       <input type="text" id="custom-date-format" placeholder="例如: yyyy-MM-dd HH:mm:ss.SSS" />
     </div>
@@ -311,8 +319,75 @@
         <option value="Shift_JIS">Shift_JIS</option>
       </select>
     </div>
+
+    <!-- 当前活跃 Pattern -->
+    <div class="config-section" id="active-pattern-section">
+      <label>当前解析 Pattern</label>
+      <div id="active-pattern-info" class="active-pattern-info">
+        <span id="active-pattern-name" class="active-pattern-name"></span>
+        <div class="active-pattern-regex-wrapper">
+          <textarea id="active-pattern-regex" class="wizard-regex-textarea active-pattern-regex" rows="3" placeholder="无活跃正则"></textarea>
+          <div class="ap-regex-actions">
+            <button id="btn-ap-save-to-db" class="btn-secondary" title="保存到 Pattern 库">💾 保存</button>
+            <button id="btn-ap-reparse" class="btn-primary" title="用当前正则重新解析">🔄 重新解析</button>
+          </div>
+        </div>
+        <span id="active-pattern-meta" class="active-pattern-meta"></span>
+      </div>
+    </div>
+
+    <!-- Pattern 选择（从DB加载） -->
+    <div class="config-section">
+      <label>从 Pattern 库加载 <span class="label-hint">(最近使用的)</span></label>
+      <div id="pattern-quick-list" class="pattern-quick-list"></div>
+    </div>
+
     <div class="config-section">
       <button id="btn-apply-parser">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pattern 管理器（主界面版） -->
+<div id="pattern-manager-main" style="display:none;">
+  <div class="pattern-manager-header">
+    <h3>📋 Pattern 管理</h3>
+    <div class="pattern-manager-actions">
+      <button id="btn-pm-new" class="btn-secondary">➕ 新建</button>
+      <button id="btn-pm-import" class="btn-secondary">📥 导入</button>
+      <button id="btn-pm-export" class="btn-secondary">📤 导出</button>
+      <button id="btn-pm-close" class="btn-secondary">✕ 关闭</button>
+    </div>
+  </div>
+  <div id="pm-list" class="pattern-list"></div>
+  <!-- 内联编辑区 -->
+  <div id="pm-editor" class="pm-editor" style="display:none;">
+    <div class="pm-editor-header">
+      <span id="pm-editor-title">新建 Pattern</span>
+      <button id="btn-pm-editor-close" class="btn-close">✕</button>
+    </div>
+    <div class="pm-editor-body">
+      <div class="pm-edit-row">
+        <label>名称</label>
+        <input type="text" id="pm-edit-name" placeholder="Pattern 名称" />
+      </div>
+      <div class="pm-edit-row">
+        <label>描述</label>
+        <input type="text" id="pm-edit-desc" placeholder="简短描述（可选）" />
+      </div>
+      <div class="pm-edit-row">
+        <label>正则表达式</label>
+        <textarea id="pm-edit-regex" rows="4" placeholder="输入正则表达式"></textarea>
+      </div>
+      <div class="pm-edit-row">
+        <label>日期格式</label>
+        <input type="text" id="pm-edit-datefmt" placeholder="yyyy-MM-dd HH:mm:ss,SSS" />
+      </div>
+    </div>
+    <div class="pm-editor-footer">
+      <span id="pm-edit-id" style="display:none;"></span>
+      <button id="btn-pm-save" class="btn-primary">💾 保存</button>
+      <button id="btn-pm-cancel" class="btn-secondary">取消</button>
     </div>
   </div>
 </div>
@@ -352,6 +427,15 @@
       </div>
     </div>
 
+    <!-- 当前使用的 Pattern 信息 -->
+    <div class="config-section" id="wizard-active-pattern" style="display:none;">
+      <label>当前 Pattern <span class="label-hint">(从库加载或手动编辑)</span></label>
+      <div class="wap-info">
+        <span id="wap-name" class="wap-name"></span>
+        <code id="wap-regex-preview" class="wap-regex-preview"></code>
+      </div>
+    </div>
+
     <!-- 预设格式面板 -->
     <div id="wizard-panel-preset" class="wizard-panel">
       <div class="config-section">
@@ -359,6 +443,7 @@
           <option value="auto">自动检测</option>
           <option value="log4j">Log4j / Logback</option>
           <option value="log4j2">Log4j2</option>
+          <option value="bracketLog">Bracket Log (括号格式)</option>
           <option value="syslog">Syslog</option>
           <option value="apache">Apache / Nginx</option>
           <option value="json">JSON 日志</option>
@@ -373,6 +458,14 @@
           <option value="ISO-8859-1">ISO-8859-1</option>
           <option value="Shift_JIS">Shift_JIS</option>
         </select>
+      </div>
+      <div class="config-section">
+        <label>正则表达式 <span class="label-hint">(可手动修改)</span></label>
+        <textarea id="wizard-preset-regex" class="wizard-regex-textarea" placeholder="选择预设后显示正则表达式..." rows="4"></textarea>
+      </div>
+      <div class="config-section">
+        <label>日期格式</label>
+        <input type="text" id="wizard-preset-date-format" placeholder="例如: yyyy-MM-dd HH:mm:ss,SSS" />
       </div>
     </div>
 
@@ -410,12 +503,14 @@
               <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}">2024-01-15 10:23:45</option>
               <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}">带时区(冒号) 2024-01-15 10:23:45,123 +08:00</option>
               <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}">带时区 2024-01-15 10:23:45,123 +0800</option>
+              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2,4}">带时区(灵活) +0800/+800</option>
               <option value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?">ISO 8601</option>
               <option value="\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024/01/15 10:23:45,123</option>
               <option value="\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}">Apache 15/Jan/2024:10:23:45 +0800</option>
               <option value="[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}">Syslog Jan 15 10:23:45</option>
               <option value="\d{2}:\d{2}:\d{2}[,.]\d{3}">仅时间 10:23:45,123</option>
               <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}\]">[2024-01-15 10:23:45,123 +0800]</option>
+              <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2,4}\]">[带时区(灵活)]</option>
               <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\]">[2024-01-15 10:23:45,123]</option>
             </select>
             <input type="text" class="fp-input" id="fp-timestamp" placeholder="自定义正则..." />
@@ -451,6 +546,17 @@
               <option value="\[?\d+\]?">可选括号</option>
             </select>
             <input type="text" class="fp-input" id="fp-tid" placeholder="线程ID正则..." />
+          </div>
+          <div class="field-pattern-row">
+            <span class="fp-label">标签</span>
+            <select class="fp-preset" data-target="fp-tag">
+              <option value="">忽略...</option>
+              <option value="\w+">单词</option>
+              <option value="\[\w+\]">[Tag] 方括号</option>
+              <option value="\[?\w+\]?">可选括号</option>
+              <option value="[^\]]+">任意非括号</option>
+            </select>
+            <input type="text" class="fp-input" id="fp-tag" placeholder="标签正则..." />
           </div>
           <div class="field-pattern-row">
             <span class="fp-label">来源</span>
@@ -529,12 +635,125 @@
   </div>
 </div>
 
+<!-- ===== Pattern 管理面板（独立于解析向导）===== -->
+<div id="pattern-manager" style="display:none;">
+  <div class="pattern-manager-header">
+    <h3>📋 Pattern 管理</h3>
+    <div class="pattern-manager-actions">
+      <button id="btn-pattern-add" class="btn-secondary">➕ 新建</button>
+      <button id="btn-pattern-import" class="btn-secondary">📥 导入</button>
+      <button id="btn-pattern-export" class="btn-secondary">📤 导出</button>
+      <button id="btn-pattern-close" class="btn-secondary">✕ 关闭</button>
+    </div>
+  </div>
+  <div id="pattern-list" class="pattern-list"></div>
+  <div id="pattern-empty" class="pattern-empty">暂无保存的 Pattern，点击「新建」创建第一个</div>
+</div>
+
+<!-- Pattern 保存确认面板（解析完成后弹出） -->
+<div id="pattern-save-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>💾 保存解析 Pattern</span>
+    <button id="btn-psp-close" class="btn-close">✕</button>
+  </div>
+  <div class="popup-content">
+    <div class="config-section">
+      <label>当前解析使用的正则表达式</label>
+      <textarea id="psp-regex" class="wizard-regex-textarea" rows="3" readonly></textarea>
+    </div>
+    <div class="config-section">
+      <label>日期格式</label>
+      <input type="text" id="psp-date-format" placeholder="自动检测" readonly />
+    </div>
+    <div class="config-section">
+      <label>Pattern 名称</label>
+      <input type="text" id="psp-name" placeholder="为这个 Pattern 命名（可选）" />
+    </div>
+    <div class="config-section">
+      <label>描述</label>
+      <input type="text" id="psp-desc" placeholder="简短描述（可选）" />
+    </div>
+    <div class="psp-stats" id="psp-stats"></div>
+  </div>
+  <div class="popup-footer">
+    <button id="btn-psp-save" class="btn-primary">💾 保存并命名</button>
+    <button id="btn-psp-skip" class="btn-secondary">⏭️ 跳过</button>
+  </div>
+</div>
+
+  <!-- Pattern 编辑弹窗 -->
+  <div id="pattern-editor-overlay" class="popup-overlay" style="display:none;">
+    <div id="pattern-editor" class="popup-panel wide-popup">
+      <div class="popup-header">
+        <span id="pattern-editor-title">新建 Pattern</span>
+        <button id="btn-pattern-editor-close" class="btn-close">✕</button>
+      </div>
+      <div class="popup-content">
+        <div class="config-section">
+          <label>名称 <span class="label-hint">(必填)</span></label>
+          <input type="text" id="pe-name" placeholder="例如: MyApp Bracket Log" />
+        </div>
+        <div class="config-section">
+          <label>描述</label>
+          <input type="text" id="pe-desc" placeholder="简短描述该 Pattern 的用途..." />
+        </div>
+        <div class="config-section">
+          <label>正则表达式 <span class="label-hint">(必填)</span></label>
+          <textarea id="pe-regex" class="wizard-regex-textarea" rows="4" placeholder="完整的正则表达式..."></textarea>
+        </div>
+        <div class="config-section">
+          <label>日期格式</label>
+          <input type="text" id="pe-date-format" placeholder="例如: yyyy-MM-dd HH:mm:ss,SSS Z" />
+        </div>
+        <div class="config-section">
+          <label>样本行</label>
+          <input type="text" id="pe-sample" placeholder="例如: [2025-01-01 01:01:01.000 +800][INFO]..." />
+        </div>
+      </div>
+      <div class="popup-footer">
+        <button id="btn-pe-save" class="btn-primary">💾 保存</button>
+        <button id="btn-pe-test" class="btn-secondary">🧪 测试匹配</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导入弹窗 -->
+  <div id="pattern-import-overlay" class="popup-overlay" style="display:none;">
+    <div id="pattern-import" class="popup-panel wide-popup">
+      <div class="popup-header">
+        <span>📥 导入 Pattern</span>
+        <button id="btn-pattern-import-close" class="btn-close">✕</button>
+      </div>
+      <div class="popup-content">
+        <div class="config-section">
+          <label>粘贴 JSON 内容，或选择文件</label>
+          <textarea id="pi-json" class="wizard-regex-textarea" rows="8" placeholder='[
+  {
+    "name": "MyPattern",
+    "description": "描述",
+    "regex": "^\\[...",
+    "dateFormat": "yyyy-MM-dd HH:mm:ss,SSS"
+  }
+]'></textarea>
+        </div>
+        <div class="config-section" style="display:flex;gap:8px;align-items:center">
+          <input type="file" id="pi-file" accept=".json" style="display:none" />
+          <button id="btn-pi-file" class="btn-secondary">📁 选择文件</button>
+        </div>
+      </div>
+      <div class="popup-footer">
+        <button id="btn-pi-import" class="btn-primary">📥 导入</button>
+      </div>
+    </div>
+  </div>
+
 <!-- 隐藏的文件输入 -->
 <input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip" multiple style="display:none;" />
 <input type="file" id="merge-file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip" multiple style="display:none;" />
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="lib/jszip/jszip.min.js"></script>
 <script src="js/utils.js"></script>
+<script src="js/db.js"></script>
 <script src="js/parser.js"></script>
 <script src="js/filter.js"></script>
 <script src="js/grid.js"></script>

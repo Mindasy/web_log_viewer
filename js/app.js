@@ -12,10 +12,19 @@ const App = {
   // 待解析的文件（向导用）
   pendingFiles: null,
 
+  // 待保存的 Pattern 配置（解析完后弹出确认面板）
+  pendingSaveConfig: null,
+
+  // Pattern 管理器状态
+  _pmList: [],
+  _editingFromMain: false,
+
   // 初始化
-  init() {
+  async init() {
     LogGrid.init();
     Timeline.init();
+    // 首次启动：将内置预设 Pattern 写入 DB
+    await this.seedPresetPatterns();
     this.bindToolbar();
     this.bindFilterBar();
     this.bindDetailPanel();
@@ -24,6 +33,32 @@ const App = {
     this.bindKeyboardShortcuts();
     this.bindParserConfig();
     ParseWizard.init();
+  },
+
+  // 首次启动时将内置预设 Pattern 写入数据库
+  async seedPresetPatterns() {
+    try {
+      const existing = await PatternDB.getAll();
+      if (existing.length > 0) return; // 已经 seed 过
+
+      const presets = [
+        { name: 'Log4j / Logback', regex: LogParser.presets.log4j.regex.source, dateFormat: LogParser.presets.log4j.dateFormat, description: '内置预设', groupsJSON: JSON.stringify(LogParser.presets.log4j.groups) },
+        { name: 'Log4j2', regex: LogParser.presets.log4j2.regex.source, dateFormat: LogParser.presets.log4j2.dateFormat, description: '内置预设', groupsJSON: JSON.stringify(LogParser.presets.log4j2.groups) },
+        { name: 'Bracket Log', regex: LogParser.presets.bracketLog.regex.source, dateFormat: LogParser.presets.bracketLog.dateFormat, description: '内置预设 - 括号格式', groupsJSON: JSON.stringify(LogParser.presets.bracketLog.groups) },
+        { name: 'Syslog', regex: LogParser.presets.syslog.regex.source, dateFormat: LogParser.presets.syslog.dateFormat, description: '内置预设', groupsJSON: JSON.stringify(LogParser.presets.syslog.groups) },
+        { name: 'Apache/Nginx', regex: LogParser.presets.apache.regex.source, dateFormat: LogParser.presets.apache.dateFormat, description: '内置预设', groupsJSON: JSON.stringify(LogParser.presets.apache.groups) },
+        { name: '通用时间戳', regex: LogParser.presets.generic.regex.source, dateFormat: LogParser.presets.generic.dateFormat, description: '内置预设', groupsJSON: JSON.stringify(LogParser.presets.generic.groups) },
+      ];
+
+      for (const p of presets) {
+        const dup = await PatternDB.getByName(p.name);
+        if (!dup) {
+          await PatternDB.add(p);
+        }
+      }
+    } catch {
+      // 静默处理
+    }
   },
 
   // ===== 工具栏事件 =====
@@ -53,6 +88,8 @@ const App = {
     document.getElementById('btn-timeline').addEventListener('click', () => this.toggleTimelinePanel());
 
     document.getElementById('btn-toggle-files').addEventListener('click', () => this.toggleFilesPanel());
+    document.getElementById('btn-parser-config').addEventListener('click', () => this.showParserConfig());
+    document.getElementById('btn-open-pm-main').addEventListener('click', () => this.openMainPatternManager());
 
     document.getElementById('btn-close-files').addEventListener('click', () => {
       document.getElementById('files-panel').classList.remove('expanded');
@@ -173,6 +210,235 @@ const App = {
     document.getElementById('btn-goto-line').addEventListener('click', () => this.gotoLine());
   },
 
+  // ===== 主界面 Pattern 管理器 =====
+  async openMainPatternManager() {
+    // 互斥：关闭解析器配置面板
+    document.getElementById('parser-config-panel').style.display = 'none';
+    document.getElementById('pattern-manager-main').style.display = 'flex';
+    Utils.showOverlay();
+    await this.loadMainPatternList();
+    this.renderMainPatternList();
+  },
+
+  closeMainPatternManager() {
+    document.getElementById('pattern-manager-main').style.display = 'none';
+    Utils.hideOverlay();
+  },
+
+  async autoSavePatternFromWizard(config) {
+    try {
+      const regex = config.customRegex;
+      const dateFmt = config.customDateFormat || '';
+      const all = await PatternDB.getAll();
+      const existing = all.find(p => p.regex === regex);
+      if (existing) {
+        if (dateFmt && existing.dateFormat !== dateFmt) {
+          await PatternDB.update(existing.id, { dateFormat: dateFmt });
+        }
+        LogParser.config.activePatternId = existing.id;
+        LogParser.config.activePatternName = existing.name;
+        return;
+      }
+      const name = `Auto-${new Date().toLocaleDateString()}-${all.length + 1}`;
+      const newId = await PatternDB.add({ name, regex, dateFormat: dateFmt, description: '自动保存' });
+      LogParser.config.activePatternId = newId;
+      LogParser.config.activePatternName = name;
+    } catch {
+      // 静默处理
+    }
+  },
+
+  // 显示保存确认面板（解析完成后）
+  showSavePanel() {
+    if (!this.pendingSaveConfig) return;
+    const cfg = this.pendingSaveConfig;
+    document.getElementById('psp-regex').value = cfg.customRegex || '';
+    document.getElementById('psp-date-format').value = cfg.customDateFormat || '';
+    document.getElementById('psp-name').value = '';
+    document.getElementById('psp-desc').value = '';
+    document.getElementById('psp-stats').textContent = '解析已完成，是否将此正则保存为 Pattern？';
+    document.getElementById('pattern-save-panel').style.display = 'flex';
+    Utils.showOverlay();
+  },
+
+  hideSavePanel() {
+    document.getElementById('pattern-save-panel').style.display = 'none';
+    Utils.hideOverlay();
+    this.pendingSaveConfig = null;
+  },
+
+  async confirmSavePattern() {
+    const cfg = this.pendingSaveConfig;
+    if (!cfg) return;
+    const name = document.getElementById('psp-name').value.trim();
+    const desc = document.getElementById('psp-desc').value.trim();
+    if (!name) { Utils.showToast('请输入 Pattern 名称', 'error'); return; }
+
+    try {
+      const existing = await PatternDB.getByName(name);
+      if (existing) {
+        await PatternDB.update(existing.id, {
+          regex: cfg.customRegex,
+          dateFormat: cfg.customDateFormat,
+          description: desc || existing.description
+        });
+        LogParser.config.activePatternId = existing.id;
+      } else {
+        const newId = await PatternDB.add({
+          name,
+          regex: cfg.customRegex,
+          dateFormat: cfg.customDateFormat,
+          description: desc
+        });
+        LogParser.config.activePatternId = newId;
+      }
+      LogParser.config.activePatternName = name;
+      Utils.showToast(`Pattern "${name}" 已保存`, 'success');
+    } catch (e) {
+      Utils.showToast('保存失败: ' + e.message, 'error');
+    }
+    this.hideSavePanel();
+  },
+
+  async loadMainPatternList() {
+    try {
+      this._pmList = await PatternDB.getAll();
+    } catch (e) {
+      this._pmList = [];
+    }
+  },
+
+  renderMainPatternList() {
+    const container = document.getElementById('pm-list');
+    if (!container) return;
+
+    if (!this._pmList || this._pmList.length === 0) {
+      container.innerHTML = '<div class="pattern-empty">暂无保存的 Pattern，点击「新建」创建第一个</div>';
+      return;
+    }
+
+    const list = this._pmList;
+    container.innerHTML = list.map(p => {
+      const desc = p.description || '';
+      const date = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
+      const isActive = p.id === LogParser.config.activePatternId;
+      const regexFull = p.regex || '';
+      const regexPreview = regexFull.length > 60 ? regexFull.substring(0, 60) + '...' : regexFull;
+      return `<div class="pattern-card${isActive ? ' active' : ''}" data-id="${p.id}">
+        <div class="pattern-card-info">
+          <div class="pattern-card-name">${isActive ? '✅ ' : ''}${this.escapeHtml(p.name)}</div>
+          <div class="pattern-card-desc">${this.escapeHtml(desc)}</div>
+          <div class="pattern-card-meta">
+            <code class="pattern-card-regex">${this.escapeHtml(regexPreview)}</code>
+            ${date ? `<span class="pattern-card-date">${date}</span>` : ''}
+          </div>
+          <div class="pattern-card-body hidden" data-expand="${p.id}">
+            <div class="pattern-card-regex-full">${this.escapeHtml(regexFull)}</div>
+            ${p.dateFormat ? `<div class="pattern-card-date">日期格式: ${this.escapeHtml(p.dateFormat)}</div>` : ''}
+          </div>
+        </div>
+        <div class="pattern-card-actions">
+          <button class="btn-mini btn-view" data-id="${p.id}" title="查看正则">👁️</button>
+          <button class="btn-mini btn-load" data-id="${p.id}" title="加载此 Pattern">📥</button>
+          <button class="btn-mini btn-edit" data-id="${p.id}" title="编辑">✏️</button>
+          <button class="btn-mini btn-del" data-id="${p.id}" title="删除">🗑️</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    container.querySelectorAll('.btn-view').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        const body = container.querySelector(`[data-expand="${id}"]`);
+        if (body) body.classList.toggle('hidden');
+      });
+    });
+    container.querySelectorAll('.btn-load').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        const p = list.find(x => x.id === id);
+        if (p) {
+          this.closeMainPatternManager();
+          this.loadPatternAndReparse(p);
+        }
+      });
+    });
+    container.querySelectorAll('.btn-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        const p = list.find(x => x.id === id);
+        if (p) this.showInlineEditor(p);
+      });
+    });
+    container.querySelectorAll('.btn-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        this.deletePatternInMain(id);
+      });
+    });
+  },
+
+  showInlineEditor(pattern) {
+    document.getElementById('pm-editor-title').textContent = pattern ? '编辑 Pattern' : '新建 Pattern';
+    document.getElementById('pm-edit-name').value = pattern ? (pattern.name || '') : '';
+    document.getElementById('pm-edit-desc').value = pattern ? (pattern.description || '') : '';
+    document.getElementById('pm-edit-regex').value = pattern ? (pattern.regex || '') : '';
+    document.getElementById('pm-edit-datefmt').value = pattern ? (pattern.dateFormat || '') : '';
+    document.getElementById('pm-edit-id').textContent = pattern ? pattern.id : '';
+    this._editingPatternId = pattern ? pattern.id : null;
+    document.getElementById('pm-editor').style.display = 'flex';
+  },
+
+  hideInlineEditor() {
+    document.getElementById('pm-editor').style.display = 'none';
+    this._editingPatternId = null;
+  },
+
+  async savePatternInline() {
+    const name = document.getElementById('pm-edit-name').value.trim();
+    const regex = document.getElementById('pm-edit-regex').value.trim();
+    const desc = document.getElementById('pm-edit-desc').value.trim();
+    const dateFmt = document.getElementById('pm-edit-datefmt').value.trim();
+
+    if (!name) { Utils.showToast('请输入名称', 'error'); return; }
+    if (!regex) { Utils.showToast('请输入正则表达式', 'error'); return; }
+
+    try {
+      if (this._editingPatternId) {
+        await PatternDB.update(this._editingPatternId, { name, regex, description: desc, dateFormat: dateFmt });
+        Utils.showToast('Pattern 已更新', 'success');
+      } else {
+        await PatternDB.add({ name, regex, description: desc, dateFormat: dateFmt });
+        Utils.showToast('Pattern 已创建', 'success');
+      }
+      this.hideInlineEditor();
+      await this.loadMainPatternList();
+      this.renderMainPatternList();
+    } catch (e) {
+      Utils.showToast('保存失败: ' + e.message, 'error');
+    }
+  },
+
+  async editPatternInMain(pattern) {
+    this.showInlineEditor(pattern);
+  },
+
+  async deletePatternInMain(id) {
+    if (!confirm('确定要删除这个 Pattern 吗？')) return;
+    try {
+      await PatternDB.remove(id);
+      if (LogParser.config.activePatternId === id) {
+        LogParser.config.activePatternId = null;
+        LogParser.config.activePatternName = '';
+      }
+      Utils.showToast('已删除', 'success');
+      await this.loadMainPatternList();
+      this.renderMainPatternList();
+    } catch (e) {
+      Utils.showToast('删除失败: ' + e.message, 'error');
+    }
+  },
+
   // ===== 详情面板 =====
   bindDetailPanel() {
     document.getElementById('btn-close-detail').addEventListener('click', () => {
@@ -274,7 +540,7 @@ const App = {
       const customDateFormat = document.getElementById('custom-date-format').value;
       const encoding = document.getElementById('parser-encoding').value;
 
-      LogParser.config = { preset, customRegex, customDateFormat, encoding };
+      LogParser.config = { preset, customRegex, customDateFormat, encoding, activePatternId: null, activePatternName: '' };
       document.getElementById('parser-config-panel').style.display = 'none';
       Utils.hideOverlay();
 
@@ -283,7 +549,57 @@ const App = {
       }
     });
 
-    // ===== 智能规则生成器事件 =====
+    // 当前活跃 Pattern - 重新解析
+    document.getElementById('btn-ap-reparse').addEventListener('click', () => {
+      const regex = document.getElementById('active-pattern-regex').value.trim();
+      if (!regex) { Utils.showToast('请输入正则表达式', 'error'); return; }
+      LogParser.config.preset = 'custom';
+      LogParser.config.customRegex = regex;
+      LogParser.config.customDateFormat = document.getElementById('custom-date-format').value.trim();
+      document.getElementById('parser-config-panel').style.display = 'none';
+      Utils.hideOverlay();
+      this.reloadFile();
+    });
+
+    // 当前活跃 Pattern - 保存到 DB
+    document.getElementById('btn-ap-save-to-db').addEventListener('click', () => {
+      this.saveActivePatternToDB();
+    });
+
+    // 活跃正则编辑时实时保存到 config
+    document.getElementById('active-pattern-regex').addEventListener('input', Utils.debounce(() => {
+      const val = document.getElementById('active-pattern-regex').value.trim();
+      if (val) {
+        LogParser.config.customRegex = val;
+        LogParser.config.preset = 'custom';
+      }
+    }, 500));
+
+    // ===== 主界面 Pattern 管理器事件 =====
+    document.getElementById('btn-pm-close').addEventListener('click', () => this.closeMainPatternManager());
+    document.getElementById('btn-pm-new').addEventListener('click', () => this.showInlineEditor(null));
+    document.getElementById('btn-pm-import').addEventListener('click', () => {
+      ParseWizard.showImportDialog();
+      const importBtn = document.getElementById('btn-pi-import');
+      const newImport = importBtn.cloneNode(true);
+      importBtn.parentNode.replaceChild(newImport, importBtn);
+      newImport.onclick = async () => {
+        await ParseWizard.doImportPatterns();
+        await this.loadMainPatternList();
+        this.renderMainPatternList();
+      };
+    });
+    document.getElementById('btn-pm-export').addEventListener('click', () => ParseWizard.exportPatterns());
+    document.getElementById('btn-pm-save').addEventListener('click', () => this.savePatternInline());
+    document.getElementById('btn-pm-cancel').addEventListener('click', () => this.hideInlineEditor());
+    document.getElementById('btn-pm-editor-close').addEventListener('click', () => this.hideInlineEditor());
+
+    // Pattern 保存确认面板事件
+    document.getElementById('btn-psp-close').addEventListener('click', () => this.hideSavePanel());
+    document.getElementById('btn-psp-skip').addEventListener('click', () => this.hideSavePanel());
+    document.getElementById('btn-psp-save').addEventListener('click', () => this.confirmSavePattern());
+
+    // 智能规则生成器事件
     this.bindSmartRuleGenerator();
   },
 
@@ -332,7 +648,9 @@ const App = {
         preset: 'custom',
         customRegex: regex,
         customDateFormat: dateFormat,
-        encoding: document.getElementById('parser-encoding').value
+        encoding: document.getElementById('parser-encoding').value,
+        activePatternId: null,
+        activePatternName: ''
       };
       document.getElementById('parser-config-panel').style.display = 'none';
       Utils.hideOverlay();
@@ -384,7 +702,7 @@ const App = {
     const container = document.getElementById('token-list');
     const fieldColors = {
       timestamp: 'timestamp', level: 'level',
-      pid: 'pid', tid: 'tid', source: 'source', message: 'message'
+      pid: 'pid', tid: 'tid', tag: 'tag', source: 'source', message: 'message'
     };
 
     container.innerHTML = tokens.map((t, i) => {
@@ -414,7 +732,7 @@ const App = {
 
   // 循环切换token字段类型
   cycleTokenField(tokenIdx) {
-    const fieldCycle = ['timestamp', 'level', 'pid', 'tid', 'source', 'message', null]; // null = 取消分配
+    const fieldCycle = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message', null]; // null = 取消分配
     const current = Object.entries(SmartRuleGenerator.assignments).find(([, idx]) => idx === tokenIdx);
     const currentField = current ? current[0] : null;
     const currentCycleIdx = fieldCycle.indexOf(currentField);
@@ -436,7 +754,7 @@ const App = {
 
   // 渲染字段分配下拉
   renderFieldAssigns(tokens) {
-    const fields = ['timestamp', 'level', 'pid', 'tid', 'source', 'message'];
+    const fields = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
     const assignments = SmartRuleGenerator.assignments;
 
     // 构建token选项
@@ -632,14 +950,23 @@ const App = {
       Utils.showToast('没有已加载的文件', 'error');
       return;
     }
-    Utils.showLoading('正在重新加载...');
+    await this.reparseWithCurrentConfig();
+  },
+
+  async reparseWithCurrentConfig() {
+    Utils.showLoading('正在重新解析...');
     try {
-      // 重新解析需要重新选择文件
-      document.getElementById('file-input').click();
-    } catch (err) {
-      Utils.showToast('重新加载失败: ' + err.message, 'error');
+      const entryCount = await LogParser.reparse(LogParser.config);
+      Utils.hideLoading();
+      if (entryCount >= 0) {
+        this.onDataLoaded();
+      } else {
+        Utils.showToast('重新解析失败，正则可能不匹配', 'error');
+      }
+    } catch (e) {
+      Utils.hideLoading();
+      Utils.showToast('重新解析失败: ' + e.message, 'error');
     }
-    Utils.hideLoading();
   },
 
   onDataLoaded() {
@@ -826,6 +1153,8 @@ const App = {
 
   // ===== 解析器配置 =====
   showParserConfig() {
+    // 互斥：关闭 Pattern 管理器
+    document.getElementById('pattern-manager-main').style.display = 'none';
     const panel = document.getElementById('parser-config-panel');
     const preset = LogParser.config.preset;
     document.getElementById('parser-preset').value = preset;
@@ -834,8 +1163,148 @@ const App = {
     document.getElementById('parser-encoding').value = LogParser.config.encoding;
     document.getElementById('custom-regex-section').style.display = preset === 'custom' ? 'block' : 'none';
     document.getElementById('smart-rule-section').style.display = preset === 'smart' ? 'block' : 'none';
+
+    // 显示当前活跃 Pattern
+    this.updateActivePatternDisplay();
+    // 加载最近 Pattern 列表
+    this.loadPatternQuickList();
+
     panel.style.display = 'flex';
     Utils.showOverlay();
+  },
+
+  updateActivePatternDisplay() {
+    const nameEl = document.getElementById('active-pattern-name');
+    const regexEl = document.getElementById('active-pattern-regex');
+    const metaEl = document.getElementById('active-pattern-meta');
+
+    const name = LogParser.config.activePatternName || '';
+    const cfg = LogParser.config;
+
+    if (cfg.activePatternId && name) {
+      nameEl.textContent = `📌 ${name}`;
+    } else if (cfg.preset === 'custom' && cfg.customRegex) {
+      nameEl.textContent = '📝 自定义正则';
+    } else if (cfg.preset !== 'auto') {
+      nameEl.textContent = `📋 ${cfg.preset}`;
+    } else {
+      nameEl.textContent = '🤖 自动检测';
+    }
+
+    // 显示当前实际使用的正则
+    const activeRegex = this.getActiveRegex();
+    regexEl.value = activeRegex || '';
+    metaEl.textContent = cfg.preset === 'custom' && cfg.customDateFormat
+      ? `日期格式: ${cfg.customDateFormat}` : '';
+  },
+
+  getActiveRegex() {
+    const cfg = LogParser.config;
+    if (cfg.customRegex) return cfg.customRegex;
+    if (cfg.preset && cfg.preset !== 'auto' && cfg.preset !== 'json') {
+      const p = LogParser.presets[cfg.preset];
+      return p ? p.regex.source : '';
+    }
+    return '';
+  },
+
+  async loadPatternQuickList() {
+    const container = document.getElementById('pattern-quick-list');
+    if (!container) return;
+    try {
+      const list = await PatternDB.getAll();
+      if (list.length === 0) {
+        container.innerHTML = '<div class="pq-empty">暂无保存的 Pattern</div>';
+        return;
+      }
+      const recent = list.slice(0, 6);
+      container.innerHTML = recent.map(p => {
+        const isActive = p.id === LogParser.config.activePatternId;
+        const preview = (p.regex || '').substring(0, 40) + ((p.regex || '').length > 40 ? '...' : '');
+        const cls = isActive ? 'pq-item active' : 'pq-item';
+        return `<div class="${cls}" data-id="${p.id}" data-regex="${this.escapeHtml(p.regex || '')}" data-date="${this.escapeHtml(p.dateFormat || '')}" title="${this.escapeHtml(preview)}">
+          <span class="pq-name">${isActive ? '✅ ' : ''}${this.escapeHtml(p.name)}</span>
+          <button class="pq-load" data-id="${p.id}">📥</button>
+        </div>`;
+      }).join('');
+
+      container.querySelectorAll('.pq-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.classList.contains('pq-load')) return;
+          const regex = item.dataset.regex;
+          const date = item.dataset.date;
+          if (regex) {
+            document.getElementById('active-pattern-regex').value = regex;
+            document.getElementById('custom-regex').value = regex;
+            document.getElementById('custom-date-format').value = date || '';
+            document.getElementById('parser-preset').value = 'custom';
+            document.getElementById('custom-regex-section').style.display = 'block';
+            LogParser.config.customRegex = regex;
+            LogParser.config.customDateFormat = date || '';
+            LogParser.config.preset = 'custom';
+          }
+        });
+        const loadBtn = item.querySelector('.pq-load');
+        if (loadBtn) {
+          loadBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = parseInt(loadBtn.dataset.id);
+            const p = list.find(x => x.id === id);
+            if (p) this.loadPatternAndReparse(p);
+          });
+        }
+      });
+    } catch {
+      container.innerHTML = '<div class="pq-empty">加载失败</div>';
+    }
+  },
+
+  async loadPatternAndReparse(pattern) {
+    LogParser.config.preset = 'custom';
+    LogParser.config.customRegex = pattern.regex || '';
+    LogParser.config.customDateFormat = pattern.dateFormat || '';
+    LogParser.config.customGroups = null;
+    if (pattern.groupsJSON) {
+      try { LogParser.config.customGroups = JSON.parse(pattern.groupsJSON); } catch {}
+    }
+    LogParser.config.activePatternId = pattern.id;
+    LogParser.config.activePatternName = pattern.name || '';
+
+    document.getElementById('parser-config-panel').style.display = 'none';
+    Utils.hideOverlay();
+
+    Utils.showToast(`已加载 Pattern: ${pattern.name}`, 'success');
+    this.reloadFile();
+  },
+
+  async saveActivePatternToDB() {
+    const regex = document.getElementById('active-pattern-regex').value.trim();
+    const dateFmt = document.getElementById('custom-date-format').value.trim();
+    if (!regex) { Utils.showToast('请输入正则表达式', 'error'); return; }
+
+    const name = prompt('请输入 Pattern 名称:', LogParser.config.activePatternName || '');
+    if (!name) return;
+
+    try {
+      if (LogParser.config.activePatternId) {
+        await PatternDB.update(LogParser.config.activePatternId, { name, regex, dateFormat: dateFmt });
+      } else {
+        const existing = await PatternDB.getByName(name);
+        if (existing) {
+          await PatternDB.update(existing.id, { name, regex, dateFormat: dateFmt });
+          LogParser.config.activePatternId = existing.id;
+        } else {
+          const newId = await PatternDB.add({ name, regex, dateFormat: dateFmt, description: '' });
+          LogParser.config.activePatternId = newId;
+        }
+      }
+      LogParser.config.activePatternName = name;
+      Utils.showToast(`Pattern "${name}" 已保存`, 'success');
+      this.updateActivePatternDisplay();
+      this.loadPatternQuickList();
+    } catch (e) {
+      Utils.showToast('保存失败: ' + e.message, 'error');
+    }
   },
 
   // ===== 详情面板 =====
@@ -847,7 +1316,8 @@ const App = {
     document.getElementById('detail-timestamp').textContent = entry.timestamp || '-';
     document.getElementById('detail-level').textContent = entry.level || '-';
     document.getElementById('detail-level').className = `level-${entry.level}`;
-    document.getElementById('detail-thread').textContent = entry.thread || '-';
+    document.getElementById('detail-pid').textContent = entry.pid || '-';
+    document.getElementById('detail-tid').textContent = entry.tid || '-';
     document.getElementById('detail-source').textContent = entry.source || '-';
     document.getElementById('detail-message').textContent = entry.message || '-';
     document.getElementById('detail-raw').textContent = entry.raw || '-';
@@ -1074,6 +1544,265 @@ const App = {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  },
+
+  // ===== Pattern Manager =====
+
+  bindPatternManagerEvents() {
+    document.getElementById('btn-pattern-close').addEventListener('click', () => this.closePatternManager());
+    document.getElementById('btn-pattern-add').addEventListener('click', () => this.showPatternEditor(null));
+    document.getElementById('btn-pattern-export').addEventListener('click', () => this.exportPatterns());
+    document.getElementById('btn-pattern-import').addEventListener('click', () => this.showImportDialog());
+    document.getElementById('btn-pattern-editor-close').addEventListener('click', () => this.hidePatternEditor());
+    document.getElementById('btn-pe-save').addEventListener('click', () => this.savePattern());
+    document.getElementById('btn-pe-test').addEventListener('click', () => this.testPatternInEditor());
+    document.getElementById('btn-pattern-import-close').addEventListener('click', () => this.hideImportDialog());
+    document.getElementById('btn-pi-import').addEventListener('click', () => this.doImportPatterns());
+    document.getElementById('btn-pi-file').addEventListener('click', () => document.getElementById('pi-file').click());
+    document.getElementById('pi-file').addEventListener('change', (e) => this.onImportFileSelected(e));
+  },
+
+  async openPatternManager() {
+    document.getElementById('parse-wizard').style.display = 'none';
+    document.getElementById('pattern-manager').style.display = 'block';
+    this.patternManagerOpen = true;
+    await this.loadPatternList();
+    this.renderPatternList();
+  },
+
+  closePatternManager() {
+    document.getElementById('pattern-manager').style.display = 'none';
+    document.getElementById('parse-wizard').style.display = 'flex';
+    this.patternManagerOpen = false;
+  },
+
+  async loadPatternList() {
+    try {
+      this.patternList = await PatternDB.getAll();
+    } catch (e) {
+      this.patternList = [];
+      Utils.showToast('加载 Pattern 列表失败: ' + e.message, 'error');
+    }
+  },
+
+  renderPatternList() {
+    const container = document.getElementById('pattern-list');
+    const empty = document.getElementById('pattern-empty');
+    if (!container) return;
+
+    if (this.patternList.length === 0) {
+      container.innerHTML = '';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    container.innerHTML = this.patternList.map(p => {
+      const desc = p.description || '';
+      const date = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
+      const regexPreview = (p.regex || '').substring(0, 60) + ((p.regex || '').length > 60 ? '...' : '');
+      return `<div class="pattern-card" data-id="${p.id}">
+        <div class="pattern-card-info">
+          <div class="pattern-card-name">${this.escapeHtml(p.name)}</div>
+          <div class="pattern-card-desc">${this.escapeHtml(desc)}</div>
+          <div class="pattern-card-meta">
+            <code class="pattern-card-regex">${this.escapeHtml(regexPreview)}</code>
+            ${date ? `<span class="pattern-card-date">${date}</span>` : ''}
+          </div>
+        </div>
+        <div class="pattern-card-actions">
+          <button class="btn-mini btn-load" data-id="${p.id}" title="加载到预设面板">📥</button>
+          <button class="btn-mini btn-edit" data-id="${p.id}" title="编辑">✏️</button>
+          <button class="btn-mini btn-del" data-id="${p.id}" title="删除">🗑️</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    container.querySelectorAll('.btn-load').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        this.loadPatternToPreset(id);
+      });
+    });
+    container.querySelectorAll('.btn-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        const p = this.patternList.find(x => x.id === id);
+        if (p) this.showPatternEditor(p);
+      });
+    });
+    container.querySelectorAll('.btn-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = parseInt(e.target.dataset.id);
+        this.deletePattern(id);
+      });
+    });
+  },
+
+  showPatternEditor(pattern) {
+    this.patternEditingId = pattern ? pattern.id : null;
+    document.getElementById('pattern-editor-title').textContent = pattern ? '编辑 Pattern' : '新建 Pattern';
+    document.getElementById('pe-name').value = pattern ? (pattern.name || '') : '';
+    document.getElementById('pe-desc').value = pattern ? (pattern.description || '') : '';
+    document.getElementById('pe-regex').value = pattern ? (pattern.regex || '') : '';
+    document.getElementById('pe-date-format').value = pattern ? (pattern.dateFormat || '') : '';
+    document.getElementById('pe-sample').value = pattern ? (pattern.sampleLine || '') : '';
+    document.getElementById('pattern-editor-overlay').style.display = 'flex';
+  },
+
+  hidePatternEditor() {
+    document.getElementById('pattern-editor-overlay').style.display = 'none';
+    this.patternEditingId = null;
+  },
+
+  async savePattern() {
+    const name = document.getElementById('pe-name').value.trim();
+    const regex = document.getElementById('pe-regex').value.trim();
+
+    if (!name) { Utils.showToast('请输入名称', 'error'); return; }
+    if (!regex) { Utils.showToast('请输入正则表达式', 'error'); return; }
+
+    const data = {
+      name,
+      description: document.getElementById('pe-desc').value.trim(),
+      regex,
+      dateFormat: document.getElementById('pe-date-format').value.trim(),
+      sampleLine: document.getElementById('pe-sample').value.trim()
+    };
+
+    try {
+      if (this.patternEditingId) {
+        await PatternDB.update(this.patternEditingId, data);
+        Utils.showToast('Pattern 已更新', 'success');
+      } else {
+        await PatternDB.add(data);
+        Utils.showToast('Pattern 已保存', 'success');
+      }
+      this.hidePatternEditor();
+      await this.loadPatternList();
+      this.renderPatternList();
+    } catch (e) {
+      Utils.showToast('保存失败: ' + e.message, 'error');
+    }
+  },
+
+  async deletePattern(id) {
+    if (!confirm('确定要删除这个 Pattern 吗？')) return;
+    try {
+      await PatternDB.remove(id);
+      if (LogParser.config.activePatternId === id) {
+        LogParser.config.activePatternId = null;
+        LogParser.config.activePatternName = '';
+      }
+      Utils.showToast('已删除', 'success');
+      await this.loadPatternList();
+      this.renderPatternList();
+    } catch (e) {
+      Utils.showToast('删除失败: ' + e.message, 'error');
+    }
+  },
+
+  async loadPatternToPreset(id) {
+    const p = this.patternList.find(x => x.id === id);
+    if (!p) return;
+
+    document.getElementById('pattern-manager').style.display = 'none';
+    document.getElementById('parse-wizard').style.display = 'flex';
+
+    this.currentMode = 'preset';
+    document.querySelectorAll('.wizard-tab').forEach(t => t.classList.remove('active'));
+    const presetTab = document.querySelector('.wizard-tab[data-mode="preset"]');
+    if (presetTab) presetTab.classList.add('active');
+    document.querySelectorAll('.wizard-panel').forEach(pn => pn.style.display = 'none');
+    document.getElementById('wizard-panel-preset').style.display = 'block';
+
+    document.getElementById('wizard-preset-select').value = 'auto';
+
+    const presetRegexEl = document.getElementById('wizard-preset-regex');
+    const presetDateEl = document.getElementById('wizard-preset-date-format');
+    if (presetRegexEl) presetRegexEl.value = p.regex || '';
+    if (presetDateEl) presetDateEl.value = p.dateFormat || '';
+
+    this.savedPresetPatterns['__loaded'] = p.regex || '';
+    this.savedPresetDateFormats['__loaded'] = p.dateFormat || '';
+
+    this.patternManagerOpen = false;
+    this.testCurrentRule();
+    Utils.showToast(`已加载 Pattern: ${p.name}`, 'success');
+  },
+
+  testPatternInEditor() {
+    const regexStr = document.getElementById('pe-regex').value.trim();
+    const sample = document.getElementById('pe-sample').value.trim() || this.getCurrentSample();
+
+    if (!regexStr) { Utils.showToast('请输入正则表达式', 'error'); return; }
+
+    let regex;
+    try { regex = new RegExp(regexStr); } catch (e) {
+      Utils.showToast('正则无效: ' + e.message, 'error');
+      return;
+    }
+
+    const match = sample.match(regex);
+    if (match && match.groups) {
+      const fields = Object.entries(match.groups);
+      let msg = '✅ 匹配成功:\n';
+      msg += fields.map(([k, v]) => `  ${k}: ${(v || '').substring(0, 80)}`).join('\n');
+      Utils.showToast(msg, 'success');
+    } else if (match) {
+      Utils.showToast('⚠️ 匹配成功，但没有命名捕获组 (使用 (?<name>...) 语法)', 'success');
+    } else {
+      Utils.showToast('❌ 样本行不匹配', 'error');
+    }
+  },
+
+  async exportPatterns() {
+    try {
+      const json = await PatternDB.exportAll();
+      Utils.downloadFile(json, 'weblogviewer-patterns.json', 'application/json');
+      Utils.showToast('导出成功', 'success');
+    } catch (e) {
+      Utils.showToast('导出失败: ' + e.message, 'error');
+    }
+  },
+
+  showImportDialog() {
+    document.getElementById('pi-json').value = '';
+    document.getElementById('pattern-import-overlay').style.display = 'flex';
+  },
+
+  hideImportDialog() {
+    document.getElementById('pattern-import-overlay').style.display = 'none';
+  },
+
+  async doImportPatterns() {
+    let jsonStr = document.getElementById('pi-json').value.trim();
+    if (!jsonStr) { Utils.showToast('请粘贴 JSON 内容或选择文件', 'error'); return; }
+    try {
+      const count = await PatternDB.importFromJSON(jsonStr);
+      Utils.showToast(`成功导入 ${count} 个 Pattern`, 'success');
+      this.hideImportDialog();
+      await this.loadPatternList();
+      this.renderPatternList();
+    } catch (e) {
+      Utils.showToast('导入失败: ' + e.message, 'error');
+    }
+  },
+
+  async onImportFileSelected(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file);
+      });
+      document.getElementById('pi-json').value = text;
+    } catch (err) {
+      Utils.showToast('读取文件失败: ' + err.message, 'error');
+    }
   }
 };
 
@@ -1085,6 +1814,11 @@ const ParseWizard = {
   currentMode: 'preset', // 'preset' | 'smart' | 'regex'
   smartTokens: [],
   smartAssignments: {},
+  savedPresetPatterns: {}, // 用户手动修改的预设正则，key=preset名
+  savedPresetDateFormats: {}, // 用户手动修改的预设日期格式，key=preset名
+  patternEditingId: null,    // 当前编辑中的 Pattern id，null=新建
+  patternList: [],           // 已加载的 Pattern 列表缓存
+  patternManagerOpen: false,
 
   init() {
     this.bindEvents();
@@ -1109,6 +1843,10 @@ const ParseWizard = {
         if (this.currentMode === 'regex') {
           this.updateFieldPatternRegex();
         }
+        if (this.currentMode === 'preset') {
+          this.updatePresetRegex();
+        }
+        this.testCurrentRule();
       });
     });
 
@@ -1130,8 +1868,35 @@ const ParseWizard = {
     // 跳过
     document.getElementById('btn-wizard-skip').addEventListener('click', () => this.skipAndParse());
 
-    // 预设选择变化时自动测试
-    document.getElementById('wizard-preset-select').addEventListener('change', () => this.testCurrentRule());
+    // 预设选择变化时自动测试 + 更新pattern
+    document.getElementById('wizard-preset-select').addEventListener('change', () => {
+      this.updatePresetRegex();
+      this.testCurrentRule();
+    });
+
+    // 预设正则手动编辑时实时测试
+    const presetRegexEl = document.getElementById('wizard-preset-regex');
+    if (presetRegexEl) {
+      presetRegexEl.addEventListener('input', Utils.debounce(() => {
+        const preset = document.getElementById('wizard-preset-select').value;
+        if (preset !== 'auto' && preset !== 'json') {
+          this.savedPresetPatterns[preset] = presetRegexEl.value;
+        }
+        this.testCurrentRule();
+      }, 300));
+    }
+
+    // 预设日期格式编辑
+    const presetDateFormatEl = document.getElementById('wizard-preset-date-format');
+    if (presetDateFormatEl) {
+      presetDateFormatEl.addEventListener('input', Utils.debounce(() => {
+        const preset = document.getElementById('wizard-preset-select').value;
+        if (preset !== 'auto' && preset !== 'json') {
+          this.savedPresetDateFormats[preset] = presetDateFormatEl.value;
+        }
+        this.testCurrentRule();
+      }, 300));
+    }
 
     // 手动正则输入时实时测试 + 语法高亮（元素可能不存在）
     const regexInput = document.getElementById('wizard-custom-regex');
@@ -1210,7 +1975,7 @@ const ParseWizard = {
     }
 
     // ===== 字段模式输入（简化正则） =====
-    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-pid', 'fp-tid', 'fp-source', 'fp-message', 'fp-separator'];
+    const fpInputs = ['fp-timestamp', 'fp-level', 'fp-pid', 'fp-tid', 'fp-tag', 'fp-source', 'fp-message', 'fp-separator'];
     fpInputs.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -1275,6 +2040,9 @@ const ParseWizard = {
         }
       }, 300));
     }
+
+    // Pattern 管理面板事件
+    this.bindPatternManagerEvents();
   },
 
   // 显示向导
@@ -1337,11 +2105,16 @@ const ParseWizard = {
     document.getElementById('wizard-test-fields').innerHTML = '';
     document.getElementById('wizard-test-stats').innerHTML = '';
 
+    // 重置保存的预设pattern
+    this.savedPresetPatterns = {};
+    this.savedPresetDateFormats = {};
+
     // 初始化字段模式输入
     document.getElementById('fp-timestamp').value = '';
     document.getElementById('fp-level').value = '';
     document.getElementById('fp-pid').value = '';
     document.getElementById('fp-tid').value = '';
+    document.getElementById('fp-tag').value = '';
     document.getElementById('fp-source').value = '';
     document.getElementById('fp-message').value = '';
     document.getElementById('fp-separator').value = '\\s+';
@@ -1360,8 +2133,28 @@ const ParseWizard = {
     document.getElementById('parse-wizard').style.display = 'flex';
     Utils.showOverlay();
 
-    // 自动测试默认规则
+    // 初始化预设正则和自动测试
+    this.updatePresetRegex();
+    this.updateWizardActivePattern();
     setTimeout(() => this.testCurrentRule(), 100);
+  },
+
+  // 更新向导中当前 Pattern 信息显示
+  updateWizardActivePattern() {
+    const section = document.getElementById('wizard-active-pattern');
+    const nameEl = document.getElementById('wap-name');
+    const regexEl = document.getElementById('wap-regex-preview');
+    if (!section || !nameEl || !regexEl) return;
+
+    const regex = this.getCurrentRegex();
+    if (regex) {
+      section.style.display = 'block';
+      const src = this.savedPresetPatterns['__loaded'] ? '从库加载' : (this.currentMode === 'smart' ? '智能识别' : (this.currentMode === 'regex' ? '手动正则' : '预设编辑'));
+      nameEl.textContent = src;
+      regexEl.textContent = regex.length > 80 ? regex.substring(0, 80) + '...' : regex;
+    } else {
+      section.style.display = 'none';
+    }
   },
 
   hide() {
@@ -1466,7 +2259,7 @@ const ParseWizard = {
 
     // 渲染token
     const container = document.getElementById('wizard-token-list');
-    const fieldColors = { timestamp: 'timestamp', level: 'level', pid: 'pid', tid: 'tid', source: 'source', message: 'message' };
+    const fieldColors = { timestamp: 'timestamp', level: 'level', pid: 'pid', tid: 'tid', tag: 'tag', source: 'source', message: 'message' };
 
     container.innerHTML = this.smartTokens.map((t, i) => {
       let fieldType = 'ignored';
@@ -1498,7 +2291,7 @@ const ParseWizard = {
 
   // 循环切换智能token
   cycleSmartToken(tokenIdx) {
-    const fieldCycle = ['timestamp', 'level', 'pid', 'tid', 'source', 'message', null];
+    const fieldCycle = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message', null];
     const current = Object.entries(this.smartAssignments).find(([, idx]) => idx === tokenIdx);
     const currentField = current ? current[0] : null;
     const nextIdx = (fieldCycle.indexOf(currentField) + 1) % fieldCycle.length;
@@ -1850,6 +2643,7 @@ const ParseWizard = {
     if (nameLower.includes('message') || nameLower.includes('msg') || nameLower.includes('body')) return '💬 消息';
     if (nameLower.includes('host') || nameLower.includes('ip') || nameLower.includes('addr')) return '🖥️ 主机';
     if (nameLower.includes('pid') || nameLower.includes('process')) return '🔢 进程ID';
+    if (nameLower.includes('tag') || nameLower.includes('label') || nameLower.includes('category')) return '🏷️ 标签';
     if (nameLower.includes('status') || nameLower.includes('code')) return '📌 状态码';
     if (nameLower.includes('method') || nameLower.includes('verb')) return '📡 HTTP方法';
     if (nameLower.includes('url') || nameLower.includes('path') || nameLower.includes('uri')) return '🔗 URL路径';
@@ -1883,7 +2677,14 @@ const ParseWizard = {
     }
     // preset 模式
     const preset = document.getElementById('wizard-preset-select').value;
-    if (preset === 'auto' || preset === 'json') return null; // 自动检测不需要正则
+    // 检查从 Pattern 管理器加载的自定义正则
+    if (this.savedPresetPatterns['__loaded']) return this.savedPresetPatterns['__loaded'];
+    if (preset === 'auto' || preset === 'json') return null;
+    // 优先使用用户手动编辑的pattern
+    const savedRegex = this.savedPresetPatterns[preset];
+    if (savedRegex) return savedRegex;
+    const presetRegexEl = document.getElementById('wizard-preset-regex');
+    if (presetRegexEl && presetRegexEl.value.trim()) return presetRegexEl.value.trim();
     const p = LogParser.presets[preset];
     return p ? p.regex.source : null;
   },
@@ -1894,6 +2695,7 @@ const ParseWizard = {
     const lv = document.getElementById('fp-level')?.value.trim();
     const pid = document.getElementById('fp-pid')?.value.trim();
     const tid = document.getElementById('fp-tid')?.value.trim();
+    const tag = document.getElementById('fp-tag')?.value.trim();
     const src = document.getElementById('fp-source')?.value.trim();
     const msg = document.getElementById('fp-message')?.value.trim();
     const sep = document.getElementById('fp-separator')?.value.trim();
@@ -1917,20 +2719,71 @@ const ParseWizard = {
     addPart('level', lv);
     addPart('pid', pid);
     addPart('tid', tid);
+    addPart('tag', tag);
     addPart('source', src);
-    // message 始终捕获前面字段匹配后的剩余内容
     if (msg) parts.push('(?<message>.*)');
 
     if (parts.length === 0) return null;
 
-    return '^' + parts.join(sep || '');
+    // 根据括号模式选择分隔符：bracketMode 时连续括号字段间无分隔符
+    const separator = sep || '';
+    let regexStr = '^';
+    for (let j = 0; j < parts.length; j++) {
+      regexStr += parts[j];
+      if (j < parts.length - 1) {
+        if (bracketMode) {
+          regexStr += '';
+        } else {
+          regexStr += separator;
+        }
+      }
+    }
+    return regexStr;
   },
 
   // 更新字段模式生成的正则预览
+  // 更新预设面板的正则预览
+  updatePresetRegex() {
+    const textarea = document.getElementById('wizard-preset-regex');
+    const dateFmtEl = document.getElementById('wizard-preset-date-format');
+    const preset = document.getElementById('wizard-preset-select').value;
+    if (!textarea) return;
+
+    if (preset === 'auto' || preset === 'json') {
+      // 如果有从 Pattern Manager 加载的自定义正则，保持它
+      if (this.savedPresetPatterns['__loaded']) {
+        textarea.value = this.savedPresetPatterns['__loaded'];
+        if (dateFmtEl) dateFmtEl.value = this.savedPresetDateFormats['__loaded'] || '';
+      } else {
+        textarea.value = '';
+        textarea.placeholder = preset === 'auto' ? '自动检测 — 将自动选择最佳匹配格式' : 'JSON 格式 — 自动解析';
+        if (dateFmtEl) dateFmtEl.value = '';
+      }
+      return;
+    }
+
+    // 优先使用用户手动修改保存的pattern
+    if (this.savedPresetPatterns[preset]) {
+      textarea.value = this.savedPresetPatterns[preset];
+    } else {
+      const p = LogParser.presets[preset];
+      textarea.value = p ? (p.regex.source || '') : '';
+    }
+
+    // 日期格式
+    if (dateFmtEl) {
+      if (this.savedPresetDateFormats && this.savedPresetDateFormats[preset]) {
+        dateFmtEl.value = this.savedPresetDateFormats[preset];
+      } else {
+        const p = LogParser.presets[preset];
+        dateFmtEl.value = p ? (p.dateFormat || '') : '';
+      }
+    }
+  },
+
   updateFieldPatternRegex() {
     const textarea = document.getElementById('fp-generated-regex');
     if (!textarea) return;
-    // 如果用户正在手动编辑（非readonly），不覆盖
     if (!textarea.hasAttribute('readonly')) return;
     const regex = this.getFieldPatternRegex();
     textarea.value = regex || '';
@@ -1944,9 +2797,13 @@ const ParseWizard = {
       return (wdf ? wdf.value : '') || SmartRuleGenerator.generatedDateFormat || '';
     }
     if (this.currentMode === 'regex') {
-      return document.getElementById('wizard-regex-date-format').value.trim();
+      const el = document.getElementById('wizard-regex-date-format');
+      return el ? el.value.trim() : '';
     }
     const preset = document.getElementById('wizard-preset-select').value;
+    if (this.savedPresetDateFormats['__loaded']) return this.savedPresetDateFormats['__loaded'];
+    const presetDateFmtEl = document.getElementById('wizard-preset-date-format');
+    if (presetDateFmtEl && presetDateFmtEl.value.trim()) return presetDateFmtEl.value.trim();
     const p = LogParser.presets[preset];
     return p ? p.dateFormat : '';
   },
@@ -1968,8 +2825,40 @@ const ParseWizard = {
       if (this.currentMode === 'preset') {
         const preset = document.getElementById('wizard-preset-select').value;
         if (preset === 'auto') {
-          container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">自动检测模式 — 将自动匹配最佳格式</div>';
-          statsEl.innerHTML = '';
+          // 自动检测：展示检测到的格式及其匹配结果
+          const detectedFormat = LogParser.autoDetect(this.rawLines || []);
+          const formatNames = { log4j: 'Log4j / Logback', bracketLog: 'Bracket Log', apache: 'Apache / Nginx', syslog: 'Syslog', json: 'JSON', generic: '通用时间戳', plain: '纯文本' };
+          const fmtName = formatNames[detectedFormat] || detectedFormat;
+
+          // 用检测到的格式尝试匹配
+          if (detectedFormat !== 'json' && detectedFormat !== 'plain') {
+            const p = LogParser.presets[detectedFormat];
+            if (p && p.regex) {
+              try {
+                const m = sample.match(p.regex);
+                const groups = this._matchToGroups(m, p.groups);
+                if (groups) {
+                  container.innerHTML = Object.entries(groups).map(([k, v]) =>
+                    `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(k)}</span><span class="wtf-value">${this.escapeHtml((v || '').substring(0, 120)) || '<span class="empty">(空)</span>'}</span></div>`
+                  ).join('');
+                  const samples = this.rawLines.slice(0, 20);
+                  let mc = 0;
+                  for (const line of samples) { if (p.regex.test(line)) mc++; }
+                  const pct = ((mc / samples.length) * 100).toFixed(0);
+                  statsEl.innerHTML = `<span class="match-ok">🤖 检测到: ${fmtName} | 📊 前20行匹配: ${mc}/${samples.length} (${pct}%)</span>`;
+                  return;
+                }
+              } catch {}
+            }
+            // regex存在但未匹配成功——显示匹配统计数据
+            const samples = this.rawLines.slice(0, 20);
+            let mc = 0;
+            for (const line of samples) { if (p.regex.test(line)) mc++; }
+            const pct = ((mc / samples.length) * 100).toFixed(0);
+            const cls = mc > 0 ? (pct > 50 ? 'match-ok' : 'match-partial') : 'match-fail';
+            statsEl.innerHTML = `<span class="${cls}">📊 前20行匹配: ${mc}/${samples.length} (${pct}%)</span>`;
+          }
+          container.innerHTML = `<div style="color:var(--text-muted);font-size:11px">🤖 检测到格式: ${fmtName} — 将自动匹配解析</div>`;
           return;
         }
         if (preset === 'json') {
@@ -1985,9 +2874,40 @@ const ParseWizard = {
           }
           return;
         }
+
+        // 其他预设格式：直接用 presets 对象的 RegExp + groups，不通过 textarea
+        const p = LogParser.presets[preset];
+        if (p && p.regex) {
+          try {
+            const m = sample.match(p.regex);
+            const g = this._matchToGroups(m, p.groups);
+            if (g) {
+              container.innerHTML = Object.entries(g).map(([k, v]) =>
+                `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(k)}</span><span class="wtf-value">${this.escapeHtml((v || '').substring(0, 120)) || '<span class="empty">(空)</span>'}</span></div>`
+              ).join('');
+              const samples = this.rawLines.slice(0, 20);
+              let mc = 0;
+              for (const line of samples) { if (p.regex.test(line)) mc++; }
+              const pct = ((mc / samples.length) * 100).toFixed(0);
+              statsEl.innerHTML = `<span class="${pct > 50 ? 'match-ok' : 'match-fail'}">📋 ${p.name} | 📊 前20行匹配: ${mc}/${samples.length} (${pct}%)</span>`;
+              return;
+            }
+          } catch {}
+        }
+        // 预设 regex 不匹配——显示前20行统计 (可能是 auto 或 generic fallthrough)
+        if (p && p.regex) {
+          const samples = this.rawLines.slice(0, 20);
+          let mc = 0;
+          for (const line of samples) { if (p.regex.test(line)) mc++; }
+          const pct = ((mc / samples.length) * 100).toFixed(0);
+          const cls = mc > 0 ? (pct > 50 ? 'match-ok' : 'match-partial') : 'match-fail';
+          statsEl.innerHTML = `<span class="${cls}">⏭️ ${p.name}: ${mc}/${samples.length} 行匹配</span>`;
+        }
+        container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">⚠️ 样本行不匹配 — 尝试切换样本行或格式</div>';
+        return;
       }
 
-      // 正则匹配测试
+      // 通用正则匹配测试 (smart / regex 模式)
       const regexStr = this.getCurrentRegex();
       if (!regexStr) {
         container.innerHTML = '<div style="color:var(--text-muted);font-size:11px">无正则表达式</div>';
@@ -2005,16 +2925,14 @@ const ParseWizard = {
       }
 
       const match = sample.match(regex);
-      if (match && match.groups) {
-        const fields = match.groups;
-        // 获取自定义列名映射
+      const groups = this._matchToGroups(match, this._getCurrentGroups());
+      if (groups) {
         const colMap = this.extractColumnMap();
-        container.innerHTML = Object.entries(fields).map(([k, v]) => {
+        container.innerHTML = Object.entries(groups).map(([k, v]) => {
           const displayName = colMap[k] || k;
           return `<div class="wizard-test-field"><span class="wtf-label">${this.escapeHtml(displayName)}</span><span class="wtf-value">${this.escapeHtml((v || '').substring(0, 120)) || '<span class="empty">(空)</span>'}</span></div>`;
         }).join('');
 
-        // 统计前20行匹配率
         const samples = this.rawLines.slice(0, 20);
         let matchCount = 0;
         for (const line of samples) {
@@ -2023,7 +2941,6 @@ const ParseWizard = {
         const pct = ((matchCount / samples.length) * 100).toFixed(0);
         statsEl.innerHTML = `<span class="${pct > 50 ? 'match-ok' : 'match-fail'}">📊 前20行匹配: ${matchCount}/${samples.length} (${pct}%)</span>`;
       } else {
-        // 尝试部分匹配：逐个字段测试
         const partialInfo = this.getPartialMatchInfo(regexStr, sample);
         if (partialInfo && partialInfo.matched.length > 0) {
           const matchedHtml = partialInfo.matched.map(({ name, value }) =>
@@ -2042,39 +2959,135 @@ const ParseWizard = {
     } catch (e) {
       // 静默处理
     }
+    this.updateWizardActivePattern();
   },
 
-  // 获取部分匹配信息：从正则中提取各命名组模式，逐个测试样本行
+  _matchToGroups(match, groupsMap) {
+    if (!match) return null;
+    if (match.groups) return match.groups;
+    if (!groupsMap) return null;
+    const result = {};
+    for (const [name, idx] of Object.entries(groupsMap)) {
+      if (match[idx] !== undefined) result[name] = match[idx];
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  },
+
+  _getCurrentGroups() {
+    if (this.currentMode === 'preset') {
+      const preset = document.getElementById('wizard-preset-select').value;
+      if (preset !== 'auto' && preset !== 'json') {
+        const p = LogParser.presets[preset];
+        return p ? p.groups : null;
+      }
+    }
+    return null;
+  },
+
+  // 获取部分匹配信息：从正则中提取各命名组模式，从上一字段匹配结果之后继续匹配
   getPartialMatchInfo(regexStr, sample) {
     try {
-      // 提取所有命名组及其模式
-      const groupPatterns = [];
+      // 提取所有命名组及其模式（含外层修饰符如 \[...\]）
+      const groupSegments = [];
+      const remaining = regexStr.replace(/^\^/, '');
+      const groupRegex = /\(\?<(\w+)>((?:[^()]|\((?:(?!\?[<:])[^()]*)\))*)\)[)\]]*/g;
+
+      // 重新构建：按出现顺序提取每个命名组的前缀+组+后缀片段
+      let combinedRegex;
+      try {
+        combinedRegex = new RegExp(regexStr);
+      } catch {
+        return null;
+      }
+
+      // 直接用完整正则分段测试：从上一次匹配结束位置继续
+      // 策略：尝试用完整正则匹配，如果失败，则逐个提取组模式并在剩余文本上测试
+      const fullMatch = sample.match(combinedRegex);
+      if (!fullMatch || !fullMatch.groups) {
+        // 完整匹配失败，尝试从正则中提取每组，顺序匹配
+        return this._sequentialPartialMatch(regexStr, sample);
+      }
+
+      // 完整匹配成功，直接返回
+      return { matched: [], unmatched: [], fullMatched: true };
+    } catch {
+      return null;
+    }
+  },
+
+  // 顺序部分匹配：从上一次匹配结果之后继续匹配下一个字段
+  _sequentialPartialMatch(regexStr, sample) {
+    try {
+      // 提取命名组及其模式
+      const segments = [];
       const groupRegex = /\(\?<(\w+)>((?:[^()]|\((?:(?!\?[<:])[^()]*)\))*)\)/g;
       let m;
       while ((m = groupRegex.exec(regexStr)) !== null) {
-        groupPatterns.push({ name: m[1], pattern: m[2] });
+        segments.push({ name: m[1], innerPattern: m[2], rawMatch: m[0], pos: m.index });
       }
 
-      if (groupPatterns.length === 0) return null;
+      if (segments.length === 0) return null;
 
+      // 先尝试用完整匹配
+      try {
+        const fullRegex = new RegExp(regexStr);
+        const fm = sample.match(fullRegex);
+        if (fm && fm.groups) {
+          const matched = Object.entries(fm.groups).map(([k, v]) => ({ name: k, value: v || '' }));
+          return { matched, unmatched: [], fullMatched: true };
+        }
+      } catch {}
+
+      // 完整匹配失败：逐步增加捕获组，从前缀开始依次匹配
+      // 思路：每个命名组的前缀包含之前所有组的完整匹配+分隔符
       const matched = [];
       const unmatched = [];
 
-      for (const { name, pattern } of groupPatterns) {
+      // 将正则按组拆成前缀+组，然后逐步累积
+      const allParts = [];
+      let lastEnd = 0;
+      for (const seg of segments) {
+        const prefix = regexStr.substring(lastEnd, seg.pos);
+        allParts.push({ prefix, groupName: seg.name, innerPattern: seg.innerPattern });
+        lastEnd = seg.pos + seg.rawMatch.length;
+      }
+
+      // 逐步匹配：先试前1个组，再试前2个组，...
+      for (let tryCount = 1; tryCount <= segments.length; tryCount++) {
+        let partialRegexStr = '';
+        for (let j = 0; j < tryCount; j++) {
+          partialRegexStr += allParts[j].prefix + '(?<' + allParts[j].groupName + '>' + allParts[j].innerPattern + ')';
+        }
+        // 确保开头有 ^ 锚定
+        if (!partialRegexStr.startsWith('^')) {
+          partialRegexStr = '^' + partialRegexStr;
+        }
         try {
-          const fieldRegex = new RegExp(pattern);
-          const fm = sample.match(fieldRegex);
-          if (fm) {
-            matched.push({ name, value: fm[0] });
+          const partialRegex = new RegExp(partialRegexStr);
+          const pm = sample.match(partialRegex);
+          if (pm && pm.groups) {
+            for (let j = 0; j < tryCount; j++) {
+              const name = allParts[j].groupName;
+              if (!matched.find(x => x.name === name)) {
+                matched.push({ name, value: pm.groups[name] || '' });
+              }
+            }
           } else {
-            unmatched.push(name);
+            break;
           }
         } catch {
-          unmatched.push(name);
+          break;
         }
       }
 
-      return { matched, unmatched };
+      // 剩余未匹配的
+      for (const seg of segments) {
+        if (!matched.find(x => x.name === seg.name)) {
+          unmatched.push(seg.name);
+        }
+      }
+
+      return { matched, unmatched, fullMatched: unmatched.length === 0 };
     } catch {
       return null;
     }
@@ -2105,7 +3118,24 @@ const ParseWizard = {
       // 提取自定义列名映射
       config.columnMap = this.extractColumnMap();
     } else {
-      config.preset = preset;
+      // preset 模式
+      const hasLoadedPattern = !!this.savedPresetPatterns['__loaded'];
+      const hasUserEdit = (preset !== 'auto' && preset !== 'json') && !!this.savedPresetPatterns[preset];
+
+      if (hasLoadedPattern) {
+        // 从 Pattern 管理器加载的自定义正则
+        config.preset = 'custom';
+        config.customRegex = this.savedPresetPatterns['__loaded'];
+        config.customDateFormat = this.getCurrentDateFormat();
+      } else if (hasUserEdit) {
+        // 用户在预设面板上手动编辑了正则
+        config.preset = 'custom';
+        config.customRegex = this.savedPresetPatterns[preset];
+        config.customDateFormat = this.getCurrentDateFormat();
+      } else {
+        // 纯预设选择（未编辑），直接传 preset 名让 parser 处理
+        config.preset = preset;
+      }
     }
 
     this.hide();
@@ -2117,7 +3147,19 @@ const ParseWizard = {
       } else {
         await LogParser.mergeFiles(this.files, config);
       }
+      // 如果使用的是自定义正则，弹出保存确认面板
+      if (config.preset === 'custom' && config.customRegex) {
+        App.pendingSaveConfig = {
+          customRegex: config.customRegex,
+          customDateFormat: config.customDateFormat || '',
+          encoding: config.encoding || 'UTF-8'
+        };
+      }
       App.onDataLoaded();
+      // 延迟弹出保存面板
+      if (App.pendingSaveConfig) {
+        setTimeout(() => App.showSavePanel(), 300);
+      }
     } catch (err) {
       Utils.showToast('文件解析失败: ' + err.message, 'error');
     }

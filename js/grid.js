@@ -190,11 +190,17 @@ const LogGrid = {
     colLevel.textContent = entry.level || '-';
     row.appendChild(colLevel);
 
-    // 线程列
-    const colThread = document.createElement('div');
-    colThread.className = 'col col-thread';
-    colThread.textContent = entry.thread || '-';
-    row.appendChild(colThread);
+    // 进程ID列
+    const colPid = document.createElement('div');
+    colPid.className = 'col col-pid';
+    colPid.textContent = entry.pid || '-';
+    row.appendChild(colPid);
+
+    // 线程ID列
+    const colTid = document.createElement('div');
+    colTid.className = 'col col-tid';
+    colTid.textContent = entry.tid || '-';
+    row.appendChild(colTid);
 
     // 来源列
     const colSource = document.createElement('div');
