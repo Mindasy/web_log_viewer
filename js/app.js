@@ -96,6 +96,9 @@ const App = {
       document.getElementById('files-panel').classList.remove('expanded');
     });
 
+    // 文件面板拖拽调整宽度
+    this.initFilesPanelResizer();
+
     // 文件输入
     document.getElementById('file-input').addEventListener('change', (e) => {
       if (e.target.files.length > 0) {
@@ -1511,6 +1514,38 @@ const App = {
   },
 
   // ===== 文件列表面板 =====
+  initFilesPanelResizer() {
+    const panel = document.getElementById('files-panel');
+    const resizer = document.getElementById('files-resizer');
+    if (!resizer) return;
+    let startX, startWidth;
+
+    resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startWidth = panel.offsetWidth;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMove = (ev) => {
+        const diff = ev.clientX - startX;
+        const newW = Math.max(120, Math.min(600, startWidth + diff));
+        panel.style.width = newW + 'px';
+        panel.classList.add('expanded');
+      };
+
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  },
+
   toggleFilesPanel() {
     const panel = document.getElementById('files-panel');
     panel.classList.toggle('expanded');
@@ -1561,32 +1596,30 @@ const App = {
       return;
     }
 
-    // 统计每个来源文件的条目数
     const fileStats = {};
     for (const entry of LogParser.entries) {
       const src = entry.sourceFile || 'unknown';
       fileStats[src] = (fileStats[src] || 0) + 1;
     }
 
-    // 分组：ZIP 文件内的文件按 ZIP 包名分组
-    const zipGroups = {}; // { zipName: [sourceFile, ...] }
+    const zipGroups = {};
     const standaloneFiles = [];
+    const seenNames = new Set();
 
     for (const sf of sourceFiles) {
+      if (seenNames.has(sf.name)) continue;
+      seenNames.add(sf.name);
+
       if (sf.zipName) {
         if (!zipGroups[sf.zipName]) zipGroups[sf.zipName] = [];
-        // 去重（同一 ZIP 内同名文件）
-        const exists = zipGroups[sf.zipName].find(f => f.name === sf.name);
-        if (!exists) zipGroups[sf.zipName].push(sf);
+        zipGroups[sf.zipName].push(sf);
       } else {
-        const exists = standaloneFiles.find(f => f.name === sf.name);
-        if (!exists) standaloneFiles.push(sf);
+        standaloneFiles.push(sf);
       }
     }
 
     let html = '';
 
-    // 渲染 ZIP 分组
     for (const [zipName, files] of Object.entries(zipGroups)) {
       html += `<div class="file-group-header" title="${this.escapeHtml(zipName)}">
         <span class="file-icon">📦</span>
@@ -1595,7 +1628,7 @@ const App = {
       </div>`;
       for (const sf of files) {
         const count = fileStats[sf.name] || 0;
-        html += `<div class="file-item file-item-child" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.displayName || sf.name)}">
+        html += `<div class="file-item file-item-child" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.displayName || sf.name)} (${Utils.formatNumber(count)}条)">
           <span class="file-icon">└ 📄</span>
           <span class="file-name">${this.escapeHtml(sf.displayName || sf.name)}</span>
           <span class="file-count">${Utils.formatNumber(count)}</span>
@@ -1603,10 +1636,9 @@ const App = {
       }
     }
 
-    // 渲染独立文件
     for (const sf of standaloneFiles) {
       const count = fileStats[sf.name] || 0;
-      html += `<div class="file-item" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.name)}">
+      html += `<div class="file-item" data-file="${this.escapeHtml(sf.name)}" title="${this.escapeHtml(sf.name)} (${Utils.formatNumber(count)}条)">
         <span class="file-icon">📄</span>
         <span class="file-name">${this.escapeHtml(sf.name)}</span>
         <span class="file-count">${Utils.formatNumber(count)}</span>
@@ -1615,16 +1647,13 @@ const App = {
 
     container.innerHTML = html;
 
-    // 点击文件项：过滤该文件的日志
     container.querySelectorAll('.file-item').forEach(item => {
       item.addEventListener('click', () => {
         const fileName = item.dataset.file;
-        // 切换选中状态
         const wasActive = item.classList.contains('active');
         container.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
         if (!wasActive) {
           item.classList.add('active');
-          // 过滤该文件的日志
           LogFilter.state.sourceFileFilter = fileName;
         } else {
           LogFilter.state.sourceFileFilter = '';
@@ -2142,7 +2171,7 @@ const ParseWizard = {
     }
 
     // Pattern 管理面板事件
-    this.bindPatternManagerEvents();
+    App.bindPatternManagerEvents();
   },
 
   // 显示向导

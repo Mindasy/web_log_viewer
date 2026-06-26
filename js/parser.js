@@ -141,33 +141,53 @@ const LogParser = {
     return this.entries.length;
   },
 
-  // 解析 ZIP 压缩文件
+  // 解析 ZIP 压缩文件（优先使用 fflate，回退到 JSZip）
   async parseZipFile(file, cfg, showProgress = true) {
-    if (typeof JSZip === 'undefined') {
-      throw new Error('JSZip 库未加载，无法解析 ZIP 文件');
+    if (typeof fflate === 'undefined' && typeof JSZip === 'undefined') {
+      throw new Error('未加载 ZIP 解析库（需加载 fflate 或 JSZip）');
     }
 
     if (showProgress) Utils.showLoading('正在解压 ZIP 文件...');
-    let zip;
-    try {
-      const arrayBuffer = await this.readFileAsArrayBuffer(file);
-      zip = await JSZip.loadAsync(arrayBuffer);
-    } catch (e) {
-      if (showProgress) Utils.hideLoading();
-      throw new Error('ZIP 文件解析失败: ' + e.message);
-    }
 
-    // 收集所有文本文件
-    const textFiles = [];
-    const allFileNames = Object.keys(zip.files);
-    for (const name of allFileNames) {
-      const entry = zip.files[name];
-      if (entry.dir) continue;
-      // 过滤非文本文件
-      const lower = name.toLowerCase();
-      if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
-          !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
-        textFiles.push({ name, entry });
+    const useFflate = typeof fflate !== 'undefined';
+
+    let textFiles;
+    if (useFflate) {
+      try {
+        const arrayBuffer = await this.readFileAsArrayBuffer(file);
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const zipFiles = fflate.unzipSync(uint8Array);
+        const allFileNames = Object.keys(zipFiles);
+        textFiles = [];
+        for (const name of allFileNames) {
+          const lower = name.toLowerCase();
+          if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
+              !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
+            textFiles.push({ name, data: zipFiles[name] });
+          }
+        }
+      } catch (e) {
+        if (showProgress) Utils.hideLoading();
+        throw new Error('ZIP 文件解析失败: ' + e.message);
+      }
+    } else {
+      try {
+        const arrayBuffer = await this.readFileAsArrayBuffer(file);
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const allFileNames = Object.keys(zip.files);
+        textFiles = [];
+        for (const name of allFileNames) {
+          const entry = zip.files[name];
+          if (entry.dir) continue;
+          const lower = name.toLowerCase();
+          if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
+              !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
+            textFiles.push({ name, entry, isJszip: true, size: entry._data?.uncompressedSize || 0 });
+          }
+        }
+      } catch (e) {
+        if (showProgress) Utils.hideLoading();
+        throw new Error('ZIP 文件解析失败: ' + e.message);
       }
     }
 
@@ -187,16 +207,21 @@ const LogParser = {
       name: file.name + '/' + f.name,
       displayName: f.name,
       zipName: file.name,
-      size: f.entry._data?.uncompressedSize || 0
+      size: f.data ? f.data.length : (f.size || 0)
     }));
 
-    // 读取并合并所有文本文件
     const allLines = [];
-    const fileLineMap = []; // 记录每行来自哪个文件
+    const fileLineMap = [];
+    const decoder = new TextDecoder('UTF-8');
 
     for (const tf of textFiles) {
       try {
-        const content = await tf.entry.async('string');
+        let content;
+        if (tf.isJszip) {
+          content = await tf.entry.async('string');
+        } else {
+          content = decoder.decode(tf.data);
+        }
         const lines = content.split(/\r?\n/);
         for (const line of lines) {
           allLines.push(line);
@@ -210,13 +235,11 @@ const LogParser = {
     if (showProgress) Utils.hideLoading();
     this.rawLines = allLines;
 
-    // 自动检测格式
     let preset = cfg.preset;
     if (preset === 'auto') {
       preset = this.autoDetect(allLines);
     }
 
-    // 解析每一行
     const parser = this.getParser(preset, cfg);
     for (let i = 0; i < allLines.length; i++) {
       const line = allLines[i];

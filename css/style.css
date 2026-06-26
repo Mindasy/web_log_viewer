@@ -179,10 +179,6 @@ html, body {
   transition: width 0.2s;
   flex-shrink: 0;
 }
-#files-panel.expanded {
-  width: 220px;
-  min-width: 220px;
-}
 #files-panel-header {
   display: flex;
   align-items: center;
@@ -213,14 +209,14 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 4px 8px;
   border-radius: var(--radius);
   cursor: pointer;
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-secondary);
   transition: background 0.1s;
-  word-break: break-all;
+  min-height: 22px;
 }
 .file-item:hover { background: var(--bg-hover); }
 .file-item.active { background: rgba(137,180,250,0.15); color: var(--accent); }
@@ -261,6 +257,29 @@ html, body {
 .file-item-child {
   padding-left: 20px !important;
   font-size: 10px !important;
+}
+
+/* ===== Panel Resizer ===== */
+.panel-resizer {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+.panel-resizer:hover {
+  background: var(--accent);
+  opacity: 0.4;
+}
+#files-panel {
+  position: relative;
+}
+#files-panel.expanded {
+  width: 240px;
+  min-width: 120px;
+  max-width: 600px;
 }
 
 /* ===== Log Panel ===== */
