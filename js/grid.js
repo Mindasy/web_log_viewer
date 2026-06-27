@@ -588,7 +588,6 @@ const LogGrid = {
     const cssHeight = this._isCapped ? this.MAX_SAFE_PX : this._totalHeight;
     const maxScroll = Math.max(0, cssHeight - clientH);
 
-    const targetScrollTop = this._logicalToCssScrollTop(displayIndex);
     const realRowHeight = this._isCapped ? cssHeight / this.totalRows : this.rowHeight;
     const rowTop = displayIndex * realRowHeight;
     const rowBottom = rowTop + realRowHeight;
@@ -599,9 +598,8 @@ const LogGrid = {
       this.scrollTop = Math.max(0, rowTop);
     } else if (rowBottom > viewBottom) {
       this.scrollTop = Math.min(rowBottom - clientH, maxScroll);
-    } else {
-      this.scrollTop = Math.min(targetScrollTop, maxScroll);
     }
+    // 已在可视区域内，不做滚动跳转
 
     this.gridBody.scrollTop = this.scrollTop;
     this.render();

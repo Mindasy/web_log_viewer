@@ -54,14 +54,19 @@ const Utils = {
     if (!this._toastEl) {
       this._toastEl = document.createElement('div');
       this._toastEl.className = 'toast';
+      this._toastEl.style.display = 'none';
       document.body.appendChild(this._toastEl);
+    }
+    if (!msg) {
+      this._toastEl.style.display = 'none';
+      return;
     }
     this._toastEl.textContent = msg;
     this._toastEl.className = 'toast ' + type;
+    this._toastEl.style.display = 'block';
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => {
-      this._toastEl.className = 'toast';
-      this._toastEl.textContent = '';
+      this._toastEl.style.display = 'none';
     }, 3000);
   },
 

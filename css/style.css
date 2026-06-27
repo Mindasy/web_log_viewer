@@ -76,6 +76,7 @@ html, body {
 #toolbar button:active { background: var(--bg-surface); }
 .status-text { color: var(--text-muted); font-size: 11px; margin-right: 8px; }
 .entry-count { color: var(--text-secondary); font-size: 11px; }
+.entry-count:empty { display: none; }
 
 /* ===== Filter Bar ===== */
 #filter-bar {
@@ -638,7 +639,6 @@ html, body {
   height: 22px;
 }
 #status-file { color: var(--text-secondary); }
-#status-memory { margin-left: auto; }
 
 /* ===== Popup Panels ===== */
 .popup-panel {
