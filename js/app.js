@@ -1711,9 +1711,9 @@ const App = {
   },
 
   escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (!this._escapeDiv) this._escapeDiv = document.createElement('div');
+    this._escapeDiv.textContent = str;
+    return this._escapeDiv.innerHTML;
   },
 
   // ===== Pattern Manager =====
@@ -3374,9 +3374,9 @@ const ParseWizard = {
   },
 
   escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (!this._escapeDiv) this._escapeDiv = document.createElement('div');
+    this._escapeDiv.textContent = str;
+    return this._escapeDiv.innerHTML;
   }
 };
 

@@ -46,15 +46,23 @@ const Utils = {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   },
 
-  // 显示 Toast
+  // 显示 Toast（复用单例元素）
+  _toastEl: null,
+  _toastTimer: null,
+
   showToast(msg, type = '') {
-    const existing = document.querySelector('.toast');
-    if (existing) existing.remove();
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = msg;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    if (!this._toastEl) {
+      this._toastEl = document.createElement('div');
+      this._toastEl.className = 'toast';
+      document.body.appendChild(this._toastEl);
+    }
+    this._toastEl.textContent = msg;
+    this._toastEl.className = 'toast ' + type;
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      this._toastEl.className = 'toast';
+      this._toastEl.textContent = '';
+    }, 3000);
   },
 
   // 显示/隐藏加载指示器
@@ -131,9 +139,16 @@ const Utils = {
     }
   },
 
+  // 解析日期字符串缓存
+  _parseCache: new Map(),
+  _parseCacheMax: 500,
+
   // 解析日期字符串（支持时区）
   parseDate(str) {
     if (!str) return null;
+
+    const cached = this._parseCache.get(str);
+    if (cached !== undefined) return cached;
 
     // Normalize timezone: +800 → +08:00, +0800 → +08:00
     let normalized = str.replace(/^\[|\]$/g, '');
@@ -143,36 +158,36 @@ const Utils = {
 
     // 先尝试原生 Date 解析（支持 ISO 8601 含时区格式）
     const d = new Date(normalized);
-    if (!isNaN(d.getTime())) return d;
+    if (!isNaN(d.getTime())) {
+      if (this._parseCache.size >= this._parseCacheMax) this._parseCache.clear();
+      this._parseCache.set(str, d);
+      return d;
+    }
 
     // 常见日志格式（含时区）
     const patterns = [
-      // ISO 8601 with timezone: 2024-01-15T10:23:45.123+08:00
       /(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:?\d{2})?)/,
-      // 带时区偏移（冒号）: 2024-01-15 10:23:45,123 +08:00
       /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2})/,
-      // 带时区偏移: 2024-01-15 10:23:45,123 +0800
       /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4})/,
-      // 带时区偏移（冒号，无毫秒）: 2024-01-15 10:23:45 +08:00
       /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{2}:\d{2})/,
-      // 带时区偏移（无毫秒）: 2024-01-15 10:23:45 +0800
       /(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{4})/,
-      // 斜杠格式: 2024/01/15 10:23:45.123
       /(\d{4}\/\d{2}\/\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/,
-      // Apache 格式: 15/Jan/2024:10:23:45 +0800
       /(\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4})/,
-      // Syslog 格式: Jan 15 10:23:45
       /([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})/,
-      // 仅时间（无日期）: 10:23:45.123
       /(\d{2}:\d{2}:\d{2}[,.]\d{3})/,
     ];
     for (const p of patterns) {
       const m = normalized.match(p);
       if (m) {
         const d2 = new Date(m[1]);
-        if (!isNaN(d2.getTime())) return d2;
+        if (!isNaN(d2.getTime())) {
+          if (this._parseCache.size >= this._parseCacheMax) this._parseCache.clear();
+          this._parseCache.set(str, d2);
+          return d2;
+        }
       }
     }
+    this._parseCache.set(str, null);
     return null;
   },
 
@@ -186,45 +201,51 @@ const Utils = {
     const m = String(date.getMinutes()).padStart(2, '0');
     const s = String(date.getSeconds()).padStart(2, '0');
     const S = String(date.getMilliseconds()).padStart(3, '0');
-    return fmt
-      .replace('yyyy', y)
-      .replace('MM', M)
-      .replace('dd', d)
-      .replace('HH', H)
-      .replace('mm', m)
-      .replace('ss', s)
-      .replace('SSS', S);
+    return fmt.replace(/(yyyy|MM|dd|HH|mm|ss|SSS)/g, (_, token) => {
+      switch (token) {
+        case 'yyyy': return y;
+        case 'MM': return M;
+        case 'dd': return d;
+        case 'HH': return H;
+        case 'mm': return m;
+        case 'ss': return s;
+        case 'SSS': return S;
+        default: return token;
+      }
+    });
   },
 
   // 检测日志级别
   detectLevel(text) {
     const upper = text.toUpperCase();
-    if (/\bFATAL\b/.test(upper)) return 'FATAL';
-    if (/\bERROR\b/.test(upper) || /\bERR\b/.test(upper) || /\bSEVERE\b/.test(upper)) return 'ERROR';
-    if (/\bWARN(?:ING)?\b/.test(upper)) return 'WARN';
-    if (/\bINFO\b/.test(upper) || /\bINFORMATION\b/.test(upper)) return 'INFO';
-    if (/\bDEBUG\b/.test(upper) || /\bDBG\b/.test(upper)) return 'DEBUG';
-    if (/\bTRACE\b/.test(upper) || /\bVERBOSE\b/.test(upper)) return 'TRACE';
+    const m = upper.match(/\b(FATAL|ERROR|ERR|SEVERE|WARN(?:ING)?|INFO|INFORMATION|DEBUG|DBG|TRACE|VERBOSE)\b/);
+    if (!m) return null;
+    const lv = m[1];
+    if (lv === 'FATAL') return 'FATAL';
+    if (lv === 'ERROR' || lv === 'ERR' || lv === 'SEVERE') return 'ERROR';
+    if (lv === 'WARN' || lv === 'WARNING') return 'WARN';
+    if (lv === 'INFO' || lv === 'INFORMATION') return 'INFO';
+    if (lv === 'DEBUG' || lv === 'DBG') return 'DEBUG';
+    if (lv === 'TRACE' || lv === 'VERBOSE') return 'TRACE';
     return null;
   },
 
   // 检测日志格式
   detectFormat(line) {
     if (!line || !line.trim()) return null;
-    // JSON
-    if (line.trim().startsWith('{') && line.trim().endsWith('}')) {
-      try { JSON.parse(line); return 'json'; } catch {}
+    const trimmed = line.trim();
+    // JSON — fast path
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try { JSON.parse(trimmed); return 'json'; } catch {}
     }
     // Apache/Nginx
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\s/.test(line)) return 'apache';
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\s/.test(trimmed)) return 'apache';
     // Syslog
-    if (/^<\d+>/.test(line)) return 'syslog';
-    // Bracket log: [2025-01-01 01:01:01.000 +800][LEVEL]...
-    if (/^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/.test(line)) return 'bracketLog';
-    // Log4j pattern
-    if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/.test(line)) return 'log4j';
-    // Generic timestamp
-    if (/^\d{4}[-/]\d{2}[-/]\d{2}/.test(line)) return 'generic';
+    if (/^<\d+>/.test(trimmed)) return 'syslog';
+    // Bracket log: [yyyy-MM-dd HH:mm:ss,SSS...
+    if (/^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/.test(trimmed)) return 'bracketLog';
+    // Log4j / generic timestamp
+    if (/^\d{4}[-/]\d{2}[-/]\d{2}/.test(trimmed)) return 'log4j';
     return 'plain';
   }
 };

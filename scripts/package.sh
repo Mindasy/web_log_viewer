@@ -37,16 +37,9 @@ tar -czf "$PACKAGE_FILE" \
     --exclude='LICENSE' \
     index.html \
     server.py \
-    css/style.css \
-    lib/jszip/jszip.min.js \
-    js/utils.js \
-    js/db.js \
-    js/parser.js \
-    js/filter.js \
-    js/grid.js \
-    js/timeline.js \
-    js/stats.js \
-    js/app.js
+    css/ \
+    lib/ \
+    js/ \
 
 FILE_SIZE=$(du -h "$PACKAGE_FILE" | cut -f1)
 echo "  完成: $PACKAGE_FILE ($FILE_SIZE)"
