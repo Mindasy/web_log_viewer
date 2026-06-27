@@ -65,7 +65,7 @@ const LogParser = {
   // 多文件来源信息
   sourceFiles: [],
 
-  // 解析文件（支持 .zip 自动解压）
+  // 解析文件（支持压缩包自动解压）
   async parseFile(file, config = {}) {
     const cfg = { ...this.config, ...config };
     this.config = cfg;
@@ -74,9 +74,13 @@ const LogParser = {
     this.rawLines = [];
     this.sourceFiles = [];
 
-    // 检测是否为 ZIP 文件
-    if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
-      return await this.parseZipFile(file, cfg);
+    // 检测是否为压缩包（zip / tar / tar.gz / tgz / rar）
+    if (ArchiveHandler.isArchive(file.name)) {
+      return await this.parseArchiveFile(file, cfg);
+    }
+
+    if (file.size > 200 * 1024 * 1024) {
+      Utils.showToast('大文件警告: 文件超过 200MB，请使用压缩格式', 'warn');
     }
 
     this.fileInfo = { name: file.name, size: file.size, lastModified: file.lastModified };
@@ -96,7 +100,7 @@ const LogParser = {
     const parser = this.getParser(preset, cfg);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.trim()) continue;
+      if (!line) continue;
       const entry = parser(line, i);
       if (entry) {
         entry.index = this.entries.length;
@@ -129,7 +133,7 @@ const LogParser = {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.trim()) continue;
+      if (!line) continue;
       const entry = parser(line, i);
       if (entry) {
         entry.index = this.entries.length;
@@ -143,94 +147,54 @@ const LogParser = {
     return this.entries.length;
   },
 
-  // 解析 ZIP 压缩文件（优先使用 fflate，回退到 JSZip）
-  async parseZipFile(file, cfg, showProgress = true) {
-    if (typeof fflate === 'undefined' && typeof JSZip === 'undefined') {
-      throw new Error('未加载 ZIP 解析库（需加载 fflate 或 JSZip）');
-    }
-
-    if (showProgress) Utils.showLoading('正在解压 ZIP 文件...');
-
-    const useFflate = typeof fflate !== 'undefined';
+  // 解析压缩文件（通过 ArchiveHandler 统一处理）
+  async parseArchiveFile(file, cfg, showProgress = true) {
+    if (showProgress) Utils.showLoading('正在解压压缩文件...');
 
     let textFiles;
-    if (useFflate) {
-      try {
-        const arrayBuffer = await this.readFileAsArrayBuffer(file);
-        const uint8Array = new Uint8Array(arrayBuffer);
-        const zipFiles = fflate.unzipSync(uint8Array);
-        const allFileNames = Object.keys(zipFiles);
-        textFiles = [];
-        for (const name of allFileNames) {
-          const lower = name.toLowerCase();
-          if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
-              !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
-            textFiles.push({ name, data: zipFiles[name] });
-          }
-        }
-      } catch (e) {
-        if (showProgress) Utils.hideLoading();
-        throw new Error('ZIP 文件解析失败: ' + e.message);
-      }
-    } else {
-      try {
-        const arrayBuffer = await this.readFileAsArrayBuffer(file);
-        const zip = await JSZip.loadAsync(arrayBuffer);
-        const allFileNames = Object.keys(zip.files);
-        textFiles = [];
-        for (const name of allFileNames) {
-          const entry = zip.files[name];
-          if (entry.dir) continue;
-          const lower = name.toLowerCase();
-          if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
-              !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
-            textFiles.push({ name, entry, isJszip: true, size: entry._data?.uncompressedSize || 0 });
-          }
-        }
-      } catch (e) {
-        if (showProgress) Utils.hideLoading();
-        throw new Error('ZIP 文件解析失败: ' + e.message);
-      }
+    try {
+      const allFiles = await ArchiveHandler.extract(file);
+      textFiles = allFiles.filter(f => f.isTextFile);
+    } catch (e) {
+      if (showProgress) Utils.hideLoading();
+      throw new Error('压缩文件解析失败: ' + e.message);
     }
 
     if (textFiles.length === 0) {
       if (showProgress) Utils.hideLoading();
-      throw new Error('ZIP 文件中未找到文本日志文件');
+      throw new Error('压缩文件中未找到文本日志文件');
     }
 
+    const ext = file.name.toLowerCase().split('.').pop();
     this.fileInfo = {
       name: file.name,
       size: file.size,
       lastModified: file.lastModified,
-      isZip: true,
-      zipFileCount: textFiles.length
+      isArchive: true,
+      archiveFileCount: textFiles.length
     };
     this.sourceFiles = textFiles.map(f => ({
       name: file.name + '/' + f.name,
       displayName: f.name,
-      zipName: file.name,
-      size: f.data ? f.data.length : (f.size || 0)
+      archiveName: file.name,
+      size: f.size
     }));
 
     const allLines = [];
     const fileLineMap = [];
-    const decoder = new TextDecoder('UTF-8');
+    const encoding = cfg.encoding && cfg.encoding !== 'UTF-8' ? cfg.encoding : 'UTF-8';
+    const decoder = new TextDecoder(encoding);
 
     for (const tf of textFiles) {
       try {
-        let content;
-        if (tf.isJszip) {
-          content = await tf.entry.async('string');
-        } else {
-          content = decoder.decode(tf.data);
-        }
+        const content = decoder.decode(tf.data);
         const lines = content.split(/\r?\n/);
         for (const line of lines) {
           allLines.push(line);
           fileLineMap.push(file.name + '/' + tf.name);
         }
       } catch (e) {
-        console.warn(`无法读取 ZIP 中的文件: ${tf.name}`, e);
+        console.warn(`无法读取压缩包中的文件: ${tf.name}`, e);
       }
     }
 
@@ -338,10 +302,10 @@ const LogParser = {
   // 创建正则解析器
   createRegexParser(preset) {
     const { regex, groups, dateFormat } = preset;
+    const usedIndices = new Set(Object.values(groups).filter(v => typeof v === 'number'));
     return (line, lineNum) => {
       const match = line.match(regex);
       if (!match) {
-        // 尝试通用解析
         return this.genericParse(line, lineNum);
       }
       const entry = {
@@ -355,15 +319,24 @@ const LogParser = {
         source: groups.source ? (match[groups.source] || '').trim() : '',
         message: groups.message ? (match[groups.message] || '').trim() : line,
         date: null,
-        bookmarked: false
+        bookmarked: false,
+        customFields: {}
       };
+
+      // 提取未映射的捕获组作为自定义字段
+      let colCounter = 1;
+      for (let i = 1; i < match.length; i++) {
+        if (!usedIndices.has(i) && match[i] !== undefined && match[i] !== '') {
+          entry.customFields[`Column${colCounter}`] = match[i].trim();
+          colCounter++;
+        }
+      }
 
       // 解析日期
       if (entry.timestamp) {
         entry.date = Utils.parseDate(entry.timestamp);
       }
 
-      // 如果没有检测到级别，尝试从消息中检测
       if (!entry.level) {
         entry.level = Utils.detectLevel(line) || '';
       }
@@ -385,7 +358,8 @@ const LogParser = {
       source: '',
       message: line,
       date: null,
-      bookmarked: false
+      bookmarked: false,
+      customFields: {}
     };
 
     // 尝试提取时间戳
@@ -411,6 +385,14 @@ const LogParser = {
   parseJsonLine(line, lineNum) {
     try {
       const obj = JSON.parse(line);
+      const standardKeys = new Set(['timestamp', 'time', '@timestamp', 'date',
+        'level', 'severity', 'log_level',
+        'pid', 'process_id',
+        'tid', 'thread_id',
+        'thread', 'threadName', 'thread_name',
+        'tag', 'component',
+        'logger', 'source', 'class', 'service',
+        'message', 'msg', 'body']);
       const entry = {
         raw: line,
         timestamp: obj.timestamp || obj.time || obj['@timestamp'] || obj.date || '',
@@ -422,8 +404,20 @@ const LogParser = {
         source: obj.logger || obj.source || obj.class || obj.service || '',
         message: obj.message || obj.msg || obj.body || JSON.stringify(obj),
         date: null,
-        bookmarked: false
+        bookmarked: false,
+        customFields: {}
       };
+      // 提取 JSON 中额外的字段作为自定义字段
+      let colCounter = 1;
+      for (const key of Object.keys(obj)) {
+        if (!standardKeys.has(key)) {
+          const val = obj[key];
+          if (val !== null && val !== undefined && val !== '') {
+            const displayName = String(key);
+            entry.customFields[displayName] = String(val);
+          }
+        }
+      }
       if (entry.timestamp) {
         entry.date = Utils.parseDate(entry.timestamp);
       }
@@ -485,11 +479,40 @@ const LogParser = {
       if (groups.source || fieldMap._sourceVal) entry.source = fieldMap._sourceVal || groups.source || '';
       if (groups.message || fieldMap._messageVal) entry.message = fieldMap._messageVal || groups.message || '';
 
-      // 保存所有自定义字段值
+      // 保存所有自定义字段值（命名组）
       for (const [groupName, value] of Object.entries(groups)) {
         const displayName = columnMap[groupName] || groupName;
         if (!['timestamp', 'level', 'pid', 'tid', 'thread', 'tag', 'source', 'message'].includes(groupName)) {
           entry.customFields[displayName] = value;
+        }
+      }
+
+      // 提取未命名的捕获组（正则中 (...) 而不带 ?<name>）
+      const namedCount = match.groups ? Object.keys(match.groups).length : 0;
+      if (namedCount > 0 && match.length - 1 > namedCount) {
+        let colCounter = 1;
+        const usedNamed = new Set();
+        // 找出 named groups 占据的索引
+        const source = regexStr || regex.source;
+        let idx = 1;
+        const namedMap = match.groups || {};
+        const namedKeys = Object.keys(namedMap);
+        // 跳过命名组占据的索引
+        const namedIdxSet = new Set();
+        if (customGroups) {
+          for (const v of Object.values(customGroups)) namedIdxSet.add(v);
+        } else {
+          // 从索引 1 开始，跳过 named groups 的数量
+          for (let i = 1; i <= namedCount; i++) namedIdxSet.add(i);
+        }
+        for (let i = 1; i < match.length; i++) {
+          if (!namedIdxSet.has(i) && match[i] !== undefined && match[i] !== '') {
+            const name = `Column${colCounter}`;
+            if (!groups[name] && !columnMap[name]) {
+              entry.customFields[name] = match[i].trim();
+              colCounter++;
+            }
+          }
         }
       }
 
@@ -499,6 +522,17 @@ const LogParser = {
       if (!entry.level) {
         entry.level = Utils.detectLevel(line) || '';
       }
+
+      // 如果通过命名组匹配，清除用户未显式捕获的标准字段
+      if (match.groups && Object.keys(match.groups).length > 0) {
+        const matchedStd = new Set(Object.keys(match.groups));
+        for (const f of ['timestamp', 'level', 'pid', 'tid', 'thread', 'tag', 'source', 'message']) {
+          if (!matchedStd.has(f)) {
+            entry[f] = '';
+          }
+        }
+      }
+
       return entry;
     };
   },
@@ -558,8 +592,8 @@ const LogParser = {
 
     for (const file of files) {
       try {
-        // 检测是否为 ZIP 文件
-        if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+        // 检测是否为压缩包
+        if (ArchiveHandler.isArchive(file.name)) {
           const savedEntries = this.entries;
           const savedRaw = this.rawLines;
           const savedSrc = this.sourceFiles;
@@ -570,7 +604,7 @@ const LogParser = {
           this.sourceFiles = [];
 
           try {
-            await this.parseZipFile(file, cfg, false);
+            await this.parseArchiveFile(file, cfg, false);
 
             this.entries.forEach(e => {
               if (!e.sourceFile) e.sourceFile = file.name;
@@ -674,6 +708,16 @@ const LogParser = {
     this.entries = [];
     this.rawLines = [];
     this.fileInfo = null;
+    this.sourceFiles = [];
+    this.config = {
+      preset: 'auto',
+      customRegex: '',
+      customDateFormat: '',
+      customGroups: null,
+      encoding: 'UTF-8',
+      activePatternId: null,
+      activePatternName: ''
+    };
   }
 };
 
@@ -692,13 +736,16 @@ const SmartRuleGenerator = {
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS ZZ' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS Z' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{3}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS Z' },
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*(?:GMT|UTC)/, fmt: "yyyy-MM-dd HH:mm:ss,SSS 'GMT'" },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy-MM-dd HH:mm:ss,SSS' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss ZZ' },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{4}/, fmt: 'yyyy-MM-dd HH:mm:ss Z' },
+    { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*(?:GMT|UTC)/, fmt: "yyyy-MM-dd HH:mm:ss 'GMT'" },
     { regex: /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'yyyy-MM-dd HH:mm:ss' },
     { regex: /\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}/, fmt: 'yyyy/MM/dd HH:mm:ss,SSS' },
     { regex: /\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'yyyy/MM/dd HH:mm:ss' },
     { regex: /\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s+[+-]\d{4}/, fmt: 'dd/MMM/yyyy:HH:mm:ss Z' },
+    { regex: /\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s+(?:GMT|UTC)/, fmt: "dd/MMM/yyyy:HH:mm:ss 'GMT'" },
     { regex: /[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}/, fmt: 'MMM dd HH:mm:ss' },
     { regex: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?/, fmt: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX" },
     { regex: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z/, fmt: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'" },
@@ -801,24 +848,24 @@ const SmartRuleGenerator = {
       const token = this.tokens[i];
 
       if (!this.assignments.timestamp && token.type === 'timestamp') {
-        this.assignments.timestamp = i;
+        this.assignments.timestamp = [i];
         // 检测日期格式
         this.generatedDateFormat = this.detectDateFormat(token.text);
         continue;
       }
 
       if (!this.assignments.level && token.type === 'level') {
-        this.assignments.level = i;
+        this.assignments.level = [i];
         continue;
       }
 
       if (!this.assignments.source && token.type === 'source') {
-        this.assignments.source = i;
+        this.assignments.source = [i];
         continue;
       }
 
       if (!this.assignments.tag && token.type === 'tag') {
-        this.assignments.tag = i;
+        this.assignments.tag = [i];
         continue;
       }
 
@@ -826,11 +873,11 @@ const SmartRuleGenerator = {
       if (token.type === 'number') {
         numberCount++;
         if (numberCount === 1 && !this.assignments.pid) {
-          this.assignments.pid = i;
+          this.assignments.pid = [i];
           continue;
         }
         if (numberCount === 2 && !this.assignments.tid) {
-          this.assignments.tid = i;
+          this.assignments.tid = [i];
           continue;
         }
       }
@@ -838,15 +885,16 @@ const SmartRuleGenerator = {
 
     // 消息：最后一个非分隔符token之后的所有内容
     // 找到最后一个已分配的token
-    const assignedIndices = new Set(Object.values(this.assignments));
-    let lastAssigned = Math.max(-1, ...assignedIndices);
+    const assignedArrays = Object.values(this.assignments).filter(Array.isArray);
+    const assignedIndices = new Set(assignedArrays.flat());
+    let lastAssigned = assignedIndices.size > 0 ? Math.max(-1, ...assignedIndices) : -1;
 
     // 消息从最后一个已分配token之后开始
     if (lastAssigned >= 0 && lastAssigned < this.tokens.length - 1) {
-      this.assignments.message = lastAssigned + 1;
+      this.assignments.message = [lastAssigned + 1];
     } else if (assignedIndices.size === 0) {
       // 没有任何分配，整行作为消息
-      this.assignments.message = 0;
+      this.assignments.message = [0];
     }
   },
 
@@ -859,26 +907,39 @@ const SmartRuleGenerator = {
     return '';
   },
 
-  // 手动分配字段
+  // 手动分配字段（支持多个 token 分配到同一字段）
   assignField(tokenIndex, fieldName) {
-    // 清除该字段之前的分配
-    for (const [field, idx] of Object.entries(this.assignments)) {
-      if (idx === tokenIndex) delete this.assignments[field];
+    // 从其他字段中移除该 token
+    for (const [field, indices] of Object.entries(this.assignments)) {
+      if (Array.isArray(indices)) {
+        const idx = indices.indexOf(tokenIndex);
+        if (idx !== -1) {
+          indices.splice(idx, 1);
+          if (indices.length === 0) delete this.assignments[field];
+          break;
+        }
+      }
     }
-    // 清除该token之前的分配
-    for (const [field, idx] of Object.entries(this.assignments)) {
-      if (field === fieldName) delete this.assignments[field];
+    // 追加到目标字段
+    if (!this.assignments[fieldName]) {
+      this.assignments[fieldName] = [];
     }
-    this.assignments[fieldName] = tokenIndex;
+    if (!this.assignments[fieldName].includes(tokenIndex)) {
+      this.assignments[fieldName].push(tokenIndex);
+    }
     this.regenerateRegex();
   },
 
   // 取消分配
   unassignField(tokenIndex) {
-    for (const [field, idx] of Object.entries(this.assignments)) {
-      if (idx === tokenIndex) {
-        delete this.assignments[field];
-        break;
+    for (const [field, indices] of Object.entries(this.assignments)) {
+      if (Array.isArray(indices)) {
+        const idx = indices.indexOf(tokenIndex);
+        if (idx !== -1) {
+          indices.splice(idx, 1);
+          if (indices.length === 0) delete this.assignments[field];
+          break;
+        }
       }
     }
     this.regenerateRegex();
@@ -886,44 +947,54 @@ const SmartRuleGenerator = {
 
   // 根据分配生成正则表达式
   regenerateRegex() {
-    const parts = [];
     const fieldOrder = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
     const assignedTokens = {};
 
-    for (const [field, idx] of Object.entries(this.assignments)) {
-      assignedTokens[idx] = field;
+    for (const [field, indices] of Object.entries(this.assignments)) {
+      if (Array.isArray(indices)) {
+        for (const idx of indices) {
+          assignedTokens[idx] = field;
+        }
+      }
     }
 
     // 检测连续括号token（如 ][ 无空格），使用空分隔符
     const isBracketToken = (t) => t && /^\[[^\]]*\]$/.test(t.text);
+    const separator = '\\s+';
 
+    // 将连续的同字段 token 合并为单个命名组，避免重复命名组
+    const groups = []; // { field: string|null, patterns: [str], indices: [int] }
     let i = 0;
     while (i < this.tokens.length) {
       if (assignedTokens[i]) {
-        // 这是一个命名字段
         const field = assignedTokens[i];
-        const tokenText = this.tokens[i].text;
-        const pattern = this.tokenToPattern(tokenText, field);
-        parts.push(`(?<${field}>${pattern})`);
-        i++;
+        const patterns = [];
+        const tokenIndices = [];
+        while (i < this.tokens.length && assignedTokens[i] === field) {
+          patterns.push(this.tokenToPattern(this.tokens[i].text, field));
+          tokenIndices.push(i);
+          i++;
+        }
+        groups.push({ field, pattern: patterns.join('\\s+'), tokenIndices });
       } else {
-        // 未分配的token，生成字面匹配或通配
-        const tokenText = this.tokens[i].text;
-        parts.push(this.escapeRegex(tokenText));
+        groups.push({ field: null, pattern: this.escapeRegex(this.tokens[i].text), tokenIndices: [i] });
         i++;
       }
     }
 
-    // 构建完整正则：检测连续括号token使用空分隔符
-    const separator = '\\s+';
+    // 第一轮：构建完整正则，末尾加 (.*)$
     let regexStr = '^';
-    for (let j = 0; j < parts.length; j++) {
-      regexStr += parts[j];
-      if (j < parts.length - 1) {
-        // 如果当前token和下一个token都是括号包裹的，使用空分隔符
-        const currToken = this.tokens[j];
-        const nextToken = this.tokens[j + 1];
-        if (isBracketToken(currToken) && isBracketToken(nextToken)) {
+    for (let j = 0; j < groups.length; j++) {
+      const g = groups[j];
+      if (g.field) {
+        regexStr += `(?<${g.field}>${g.pattern})`;
+      } else {
+        regexStr += g.pattern;
+      }
+      if (j < groups.length - 1) {
+        const currLastIdx = g.tokenIndices[g.tokenIndices.length - 1];
+        const nextFirstIdx = groups[j + 1].tokenIndices[0];
+        if (isBracketToken(this.tokens[currLastIdx]) && isBracketToken(this.tokens[nextFirstIdx])) {
           regexStr += '';
         } else {
           regexStr += separator;
@@ -932,41 +1003,58 @@ const SmartRuleGenerator = {
     }
     this.generatedRegex = regexStr + '(.*)$';
 
-    // 如果消息字段是最后一个命名字段，把后面的(.*)合并进去
-    if (this.assignments.message !== undefined) {
-      // 重建：消息字段捕获到行尾
-      const msgIdx = this.assignments.message;
-      const newParts = [];
-      for (let j = 0; j < this.tokens.length; j++) {
-        if (j === msgIdx) {
-          const tokenText = this.tokens[j].text;
-          const pattern = this.tokenToPattern(tokenText, 'message');
-          newParts.push(`(?<message>${pattern}.*)`);
-          break; // 消息之后的不再处理
-        } else if (assignedTokens[j]) {
-          const field = assignedTokens[j];
-          const tokenText = this.tokens[j].text;
-          const pattern = this.tokenToPattern(tokenText, field);
-          newParts.push(`(?<${field}>${pattern})`);
-        } else {
-          newParts.push(this.escapeRegex(this.tokens[j].text));
-        }
-      }
-      // 重建时也处理连续括号
-      let msgRegex = '^';
-      for (let j = 0; j < newParts.length; j++) {
-        msgRegex += newParts[j];
-        if (j < newParts.length - 1) {
-          const currToken = this.tokens[j];
-          const nextToken = this.tokens[j + 1];
-          if (isBracketToken(currToken) && isBracketToken(nextToken)) {
-            msgRegex += '';
-          } else {
-            msgRegex += separator;
+    // 如果消息字段有分配，重建：从首个消息组开始捕获到行尾
+    if (this.assignments.message && this.assignments.message.length > 0) {
+      const msgGroups = groups.filter(g => g.field === 'message');
+      if (msgGroups.length > 0) {
+        const firstMsgGroup = msgGroups[0];
+        const msgIdx = firstMsgGroup.tokenIndices[0];
+        const newGroups = [];
+        let rebuildMsg = false;
+        for (let j = 0; j < groups.length; j++) {
+          const g = groups[j];
+          if (g.field === 'message' && !rebuildMsg) {
+            rebuildMsg = true;
+            // 将首个消息组及之前所有未处理的消息组合并到消息捕获中，一直延伸到行尾
+            const allMsgPatterns = [];
+            const allMsgIndices = [];
+            for (let k = j; k < groups.length; k++) {
+              if (groups[k].field === 'message') {
+                allMsgPatterns.push(groups[k].pattern);
+                allMsgIndices.push(...groups[k].tokenIndices);
+              }
+            }
+            newGroups.push({
+              field: 'message',
+              pattern: allMsgPatterns.join('\\s+') + '.*',
+              tokenIndices: allMsgIndices
+            });
+            break;
+          } else if (!rebuildMsg) {
+            newGroups.push(g);
           }
         }
+        // 用 newGroups 重建
+        let msgRegex = '^';
+        for (let j = 0; j < newGroups.length; j++) {
+          const g = newGroups[j];
+          if (g.field) {
+            msgRegex += `(?<${g.field}>${g.pattern})`;
+          } else {
+            msgRegex += g.pattern;
+          }
+          if (j < newGroups.length - 1) {
+            const currLastIdx = g.tokenIndices[g.tokenIndices.length - 1];
+            const nextFirstIdx = newGroups[j + 1].tokenIndices[0];
+            if (isBracketToken(this.tokens[currLastIdx]) && isBracketToken(this.tokens[nextFirstIdx])) {
+              msgRegex += '';
+            } else {
+              msgRegex += separator;
+            }
+          }
+        }
+        this.generatedRegex = msgRegex;
       }
-      this.generatedRegex = msgRegex;
     }
 
     return this.generatedRegex;

@@ -30,6 +30,8 @@
     <span class="separator"></span>
     <button id="btn-parser-config" title="解析器配置">⚙️ 解析器</button>
     <button id="btn-open-pm-main" title="Pattern 管理">📋 Pattern</button>
+    <span class="separator"></span>
+    <button id="btn-theme-toggle" title="切换主题">🌙 主题</button>
   </div>
   <div class="toolbar-group toolbar-right">
     <span id="status-text" class="status-text">就绪</span>
@@ -267,16 +269,7 @@
   <div id="column-settings-content">
     <div class="cs-section">
       <div class="cs-hint">勾选要显示的列（序号列固定显示）</div>
-      <div id="cs-column-list">
-        <label class="cs-column cs-disabled"><input type="checkbox" checked disabled> # (序号) - 固定</label>
-        <label class="cs-column" data-col="bookmark"><input type="checkbox" checked> 🔖 书签</label>
-        <label class="cs-column" data-col="timestamp"><input type="checkbox" checked> 时间戳</label>
-        <label class="cs-column" data-col="level"><input type="checkbox" checked> 级别</label>
-        <label class="cs-column" data-col="pid"><input type="checkbox" checked> 进程ID</label>
-        <label class="cs-column" data-col="tid"><input type="checkbox" checked> 线程ID</label>
-        <label class="cs-column" data-col="source"><input type="checkbox" checked> 来源</label>
-        <label class="cs-column" data-col="message"><input type="checkbox" checked> 消息</label>
-      </div>
+      <div id="cs-column-list"></div>
     </div>
   </div>
 </div>
@@ -322,6 +315,7 @@
           <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
           <span class="token-legend-item"><span class="token-dot pid"></span> 进程ID</span>
           <span class="token-legend-item"><span class="token-dot tid"></span> 线程ID</span>
+          <span class="token-legend-item"><span class="token-dot tg"></span> 标签</span>
           <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
           <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
           <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
@@ -438,6 +432,7 @@
     </div>
   </div>
   <div id="pm-list" class="pattern-list"></div>
+  <div id="pm-editor-mask" class="pm-editor-mask"></div>
   <!-- 内联编辑区 -->
   <div id="pm-editor" class="pm-editor" style="display:none;">
     <div class="pm-editor-header">
@@ -557,6 +552,7 @@
           <span class="token-legend-item"><span class="token-dot lv"></span> 级别</span>
           <span class="token-legend-item"><span class="token-dot pid"></span> 进程ID</span>
           <span class="token-legend-item"><span class="token-dot tid"></span> 线程ID</span>
+          <span class="token-legend-item"><span class="token-dot tg"></span> 标签</span>
           <span class="token-legend-item"><span class="token-dot src"></span> 来源</span>
           <span class="token-legend-item"><span class="token-dot msg"></span> 消息</span>
           <span class="token-legend-item"><span class="token-dot ign"></span> 忽略</span>
@@ -573,109 +569,166 @@
       <div class="config-section">
         <label>字段模式 <span class="label-hint">(选择范式或自定义正则片段，自动组合成完整正则)</span></label>
         <div class="field-pattern-grid">
-          <div class="field-pattern-row">
-            <span class="fp-label">时间戳</span>
-            <select class="fp-preset" data-target="fp-timestamp">
-              <option value="">自定义...</option>
-              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024-01-15 10:23:45,123</option>
-              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}">2024-01-15 10:23:45</option>
-              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}">带时区(冒号) 2024-01-15 10:23:45,123 +08:00</option>
-              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}">带时区 2024-01-15 10:23:45,123 +0800</option>
-              <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2,4}">带时区(灵活) +0800/+800</option>
-              <option value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?">ISO 8601</option>
-              <option value="\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}">2024/01/15 10:23:45,123</option>
-              <option value="\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}">Apache 15/Jan/2024:10:23:45 +0800</option>
-              <option value="[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}">Syslog Jan 15 10:23:45</option>
-              <option value="\d{2}:\d{2}:\d{2}[,.]\d{3}">仅时间 10:23:45,123</option>
-              <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}\]">[2024-01-15 10:23:45,123 +0800]</option>
-              <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2,4}\]">[带时区(灵活)]</option>
-              <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\]">[2024-01-15 10:23:45,123]</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-timestamp" placeholder="自定义正则..." />
+          <div class="field-pattern-row" data-fp-field="timestamp">
+            <div class="fp-line1">
+              <span class="fp-label">时间戳</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-timestamp">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}" title="2024-01-15 10:23:45,123">基础 毫秒</option>
+                  <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}" title="2024-01-15 10:23:45">基础 无毫秒</option>
+                  <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{2}:\d{2}" title="2024-01-15 10:23:45,123 +08:00">带时区 +08:00</option>
+                  <option value="\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}" title="2024-01-15 10:23:45,123 +0800">带时区 +0800</option>
+                  <option value="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:[+-]\d{2}:\d{2})?" title="2024-01-15T10:23:45.123+08:00">ISO 8601</option>
+                  <option value="\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}" title="2024/01/15 10:23:45,123">日期 / 毫秒</option>
+                  <option value="\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}" title="15/Jan/2024:10:23:45 +0800">Apache 格式</option>
+                  <option value="[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}" title="Jan 15 10:23:45">Syslog 格式</option>
+                  <option value="\d{2}:\d{2}:\d{2}[,.]\d{3}" title="10:23:45,123">仅时间 毫秒</option>
+                  <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\s*[+-]\d{4}\]" title="[2024-01-15 10:23:45,123 +0800]">[方括号] 毫秒+时区</option>
+                  <option value="\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d{3}\]" title="[2024-01-15 10:23:45,123]">[方括号] 无时区</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="timestamp" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-timestamp" placeholder="自定义..." data-field="timestamp" />
+            </div>
           </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">级别</span>
-            <select class="fp-preset" data-target="fp-level">
-              <option value="">自定义...</option>
-              <option value="FATAL|ERROR|WARN|INFO|DEBUG|TRACE">标准级别</option>
-              <option value="FATAL|ERROR|WARN(?:ING)?|INFO|DEBUG|TRACE|VERBOSE">扩展级别</option>
-              <option value="\w+">任意单词</option>
-              <option value="\[?\w+\]?">可选括号包裹</option>
-              <option value="\[FATAL|ERROR|WARN|INFO|DEBUG|TRACE\]">[INFO] 方括号</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-level" placeholder="自定义正则..." />
+          <div class="field-pattern-row" data-fp-field="level">
+            <div class="fp-line1">
+              <span class="fp-label">级别</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-level">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value="FATAL|ERROR|WARN|INFO|DEBUG|TRACE">标准级别</option>
+                  <option value="FATAL|ERROR|WARN(?:ING)?|INFO|DEBUG|TRACE|VERBOSE">扩展级别</option>
+                  <option value="\w+">任意单词</option>
+                  <option value="\[FATAL|ERROR|WARN|INFO|DEBUG|TRACE\]">[方括号] 级别</option>
+                  <option value="\[?\w+\]?">可选括号</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="level" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-level" placeholder="自定义..." data-field="level" />
+            </div>
           </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">进程ID</span>
-            <select class="fp-preset" data-target="fp-pid">
-              <option value="">忽略...</option>
-              <option value="\d+">纯数字</option>
-              <option value="\[\d+\]">[12345] 方括号</option>
-              <option value="\[?\d+\]?">可选括号</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-pid" placeholder="进程ID正则..." />
+          <div class="field-pattern-row" data-fp-field="pid">
+            <div class="fp-line1">
+              <span class="fp-label">进程ID</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-pid">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value="\d+">纯数字</option>
+                  <option value="\[\d+\]">[方括号] 数字</option>
+                  <option value="\[?\d+\]?">可选括号</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="pid" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-pid" placeholder="自定义..." data-field="pid" />
+            </div>
           </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">线程ID</span>
-            <select class="fp-preset" data-target="fp-tid">
-              <option value="">忽略...</option>
-              <option value="\d+">纯数字</option>
-              <option value="\[\d+\]">[12345] 方括号</option>
-              <option value="\[?\d+\]?">可选括号</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-tid" placeholder="线程ID正则..." />
+          <div class="field-pattern-row" data-fp-field="tid">
+            <div class="fp-line1">
+              <span class="fp-label">线程ID</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-tid">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value="\d+">纯数字</option>
+                  <option value="\[\d+\]">[方括号] 数字</option>
+                  <option value="\[?\d+\]?">可选括号</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="tid" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-tid" placeholder="自定义..." data-field="tid" />
+            </div>
           </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">标签</span>
-            <select class="fp-preset" data-target="fp-tag">
-              <option value="">忽略...</option>
-              <option value="\w+">单词</option>
-              <option value="\[\w+\]">[Tag] 方括号</option>
-              <option value="\[?\w+\]?">可选括号</option>
-              <option value="[^\]]+">任意非括号</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-tag" placeholder="标签正则..." />
+          <div class="field-pattern-row" data-fp-field="tag">
+            <div class="fp-line1">
+              <span class="fp-label">标签</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-tag">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value="\w+">单词</option>
+                  <option value="\[\w+\]">[方括号] 单词</option>
+                  <option value="[^\]]+">任意非括号</option>
+                  <option value="\[?\w+\]?">可选括号</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="tag" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-tag" placeholder="自定义..." data-field="tag" />
+            </div>
           </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">来源</span>
-            <select class="fp-preset" data-target="fp-source">
-              <option value="">自定义...</option>
-              <option value="[\w.]+">com.example.App</option>
-              <option value="\S+">任意非空白</option>
-              <option value="[\w.]+:\d+">含行号 App.java:42</option>
-              <option value="[\w.]+(?::\w+)?(?::\d+)?">file.cpp:open:12</option>
-              <option value="\[[\w.]+(?::\w+)?(?::\d+)?\]">[file.cpp:open:12] 方括号</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-source" placeholder="自定义正则..." />
+          <div class="field-pattern-row" data-fp-field="source">
+            <div class="fp-line1">
+              <span class="fp-label">来源</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-source">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value="[\w.]+">com.example.App</option>
+                  <option value="\S+">任意非空白</option>
+                  <option value="[\w.]+:\d+">含行号</option>
+                  <option value="[\w.]+(?::\w+)?(?::\d+)?">文件:函数:行号</option>
+                  <option value="\[[\w.]+(?::\w+)?(?::\d+)?\]">[方括号] 来源</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="source" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-source" placeholder="自定义..." data-field="source" />
+            </div>
           </div>
-          <div class="field-pattern-row">
-            <span class="fp-label">消息</span>
-            <select class="fp-preset" data-target="fp-message">
-              <option value="">自定义...</option>
-              <option value=".*">任意内容（到行尾）</option>
-              <option value=".+">非空内容</option>
-              <option value="[^-].*">排除分隔符</option>
-            </select>
-            <input type="text" class="fp-input" id="fp-message" placeholder="自定义正则..." />
+          <div class="field-pattern-row" data-fp-field="message">
+            <div class="fp-line1">
+              <span class="fp-label">消息</span>
+              <div class="fp-right">
+                <select class="fp-preset" data-target="fp-message">
+                  <option value="-">忽略</option>
+                  <option value="">自定义...</option>
+                  <option value=".*">任意（到行尾）</option>
+                  <option value=".+">非空内容</option>
+                  <option value="[^-].*">排除分隔符 -</option>
+                </select>
+                <label class="fp-bracket-label" title="添加方括号包裹"><input type="checkbox" class="fp-bracket-cb" data-field="message" /> []</label>
+              </div>
+            </div>
+            <div class="fp-line2">
+              <input type="text" class="fp-input" id="fp-message" placeholder="自定义..." data-field="message" />
+            </div>
           </div>
-        </div>
-        <div class="fp-separator-row">
-          <span class="fp-label">分隔符</span>
-          <select class="fp-preset" data-target="fp-separator">
-            <option value="\s+">空白 \s+</option>
-            <option value="\s*">可选空白 \s*</option>
-            <option value="\s+-\s+"> - </option>
-            <option value="\s*\|\s*"> | </option>
-            <option value="">无分隔符 (紧凑)</option>
-            <option value="\s+">自定义...</option>
-          </select>
-          <input type="text" class="fp-input fp-sep" id="fp-separator" value="\s+" placeholder="\s+" />
-        </div>
-        <div class="fp-option-row">
-          <label class="fp-checkbox-label">
-            <input type="checkbox" id="fp-bracket-mode" />
-            自动包裹方括号 (每个字段外加 \[...\])
-          </label>
+          <div id="fp-custom-fields"></div>
+          <div class="fp-add-field-row">
+            <button id="btn-fp-add-field" class="btn-secondary" style="font-size:11px;padding:3px 8px;">➕ 添加字段</button>
+            <label class="fp-checkbox-label" style="margin-left:auto">
+              <input type="checkbox" id="fp-bracket-all" />
+              全部括号 []
+            </label>
+          </div>
+          <div class="fp-separator-row">
+            <span class="fp-label">分隔符</span>
+            <div class="fp-right">
+              <select class="fp-preset" data-target="fp-separator">
+                <option value="\s+">空白</option>
+                <option value="\s*">可选空白</option>
+                <option value="\s+-\s+"> - </option>
+                <option value="\s*\|\s*"> | </option>
+                <option value="">无分隔符</option>
+              </select>
+              <input type="text" class="fp-input" id="fp-separator" value="\s+" placeholder="\s+" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -796,44 +849,54 @@
   </div>
 
   <!-- 导入弹窗 -->
-  <div id="pattern-import-overlay" class="popup-overlay" style="display:none;">
+  <div id="pattern-import-overlay" class="popup-overlay">
     <div id="pattern-import" class="popup-panel wide-popup">
       <div class="popup-header">
         <span>📥 导入 Pattern</span>
         <button id="btn-pattern-import-close" class="btn-close">✕</button>
       </div>
       <div class="popup-content">
-        <div class="config-section">
-          <label>粘贴 JSON 内容，或选择文件</label>
-          <textarea id="pi-json" class="wizard-regex-textarea" rows="8" placeholder='[
-  {
-    "name": "MyPattern",
-    "description": "描述",
-    "regex": "^\\[...",
-    "dateFormat": "yyyy-MM-dd HH:mm:ss,SSS"
-  }
-]'></textarea>
+        <div class="pi-info">
+          <div class="pi-info-icon">ℹ️</div>
+          <div class="pi-info-text">导入 JSON 格式的 Pattern，支持从其他工具导出的标准格式。相同名称的 Pattern 将被覆盖更新。</div>
         </div>
-        <div class="config-section" style="display:flex;gap:8px;align-items:center">
+        <div class="pi-format-hint">
+          <code>[
+  { "name": "MyPattern", "regex": "^\\[...", "description": "...", "dateFormat": "yyyy-MM-dd HH:mm:ss,SSS" }
+]</code>
+        </div>
+        <div class="pi-dropzone" id="pi-dropzone">
+          <div class="pi-dropzone-placeholder" id="pi-dropzone-placeholder">
+            <div class="pi-dropzone-icon">📄</div>
+            <div class="pi-dropzone-text">拖拽 .json 文件到此处，或点击下方按钮选择文件</div>
+          </div>
+          <textarea id="pi-json" class="pi-textarea" rows="8" placeholder='在此粘贴 JSON 内容…'></textarea>
+        </div>
+        <div class="pi-status" id="pi-status"></div>
+        <div class="pi-file-row">
           <input type="file" id="pi-file" accept=".json" style="display:none" />
-          <button id="btn-pi-file" class="btn-secondary">📁 选择文件</button>
+          <button id="btn-pi-file" class="btn-secondary">📁 选择 .json 文件</button>
+          <span class="pi-file-name" id="pi-file-name"></span>
+          <button id="btn-pi-clear" class="btn-text" style="display:none">清除</button>
         </div>
       </div>
       <div class="popup-footer">
-        <button id="btn-pi-import" class="btn-primary">📥 导入</button>
+        <div class="pi-footer-info" id="pi-footer-info"></div>
+        <button id="btn-pi-import" class="btn-primary" disabled>📥 导入</button>
       </div>
     </div>
   </div>
 
 <!-- 隐藏的文件输入 -->
-<input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip" multiple style="display:none;" />
-<input type="file" id="merge-file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip" multiple style="display:none;" />
+<input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
+<input type="file" id="merge-file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
 
 <script src="lib/jszip/jszip.min.js"></script>
 <script src="lib/fflate/fflate.umd.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/db.js"></script>
 <script src="js/parser.js"></script>
+<script src="js/archive.js"></script>
 <script src="js/filter.js"></script>
 <script src="js/grid.js"></script>
 <script src="js/timeline.js"></script>

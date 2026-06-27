@@ -7,7 +7,7 @@ const LogGrid = {
   header: null,
 
   // 虚拟滚动状态
-  rowHeight: 22,
+  rowHeight: 24,
   visibleCount: 0,
   scrollTop: 0,
   totalRows: 0,
@@ -32,6 +32,14 @@ const LogGrid = {
     { key: 'message',   label: '消息',   className: 'col-message',     minWidth: 120, canHide: true,  canSort: false },
   ],
 
+  // 动态列（来自 customFields）
+  _dynamicColDefs: [],
+
+  // 所有列定义（静态 + 动态）
+  getAllColDefs() {
+    return [...this.columnDefs, ...this._dynamicColDefs];
+  },
+
   // 列隐藏状态
   hiddenColumns: new Set(),
 
@@ -47,18 +55,24 @@ const LogGrid = {
     this.header = document.getElementById('grid-header');
     this.bindEvents();
     this.calculateVisibleCount();
-    this.renderHeader();
+    this.renderEmptyState();
+  },
+
+  renderEmptyState() {
+    this.header.textContent = '';
+    this.viewport.innerHTML = '<div class="grid-empty"><div class="grid-empty-icon">📄</div><div>请加载日志文件</div><div class="grid-empty-sub">拖拽文件到此处，或点击左上角 + 按钮</div></div>';
+    this.viewport.style.height = 'auto';
   },
 
   isColumnVisible(key) {
-    const def = this.columnDefs.find(d => d.key === key);
+    const def = this.getAllColDefs().find(d => d.key === key);
     if (!def || !def.canHide) return true;
     return !this.hiddenColumns.has(key);
   },
 
   renderHeader() {
     this.header.textContent = '';
-    for (const def of this.columnDefs) {
+    for (const def of this.getAllColDefs()) {
       if (!this.isColumnVisible(def.key)) continue;
       const col = document.createElement('div');
       col.className = `col ${def.className}`;
@@ -122,7 +136,7 @@ const LogGrid = {
       const colEl = resizer.parentElement;
       const startX = e.clientX;
       const startWidth = colEl.offsetWidth;
-      const def = this.columnDefs.find(d => d.key === colKey);
+      const def = this.getAllColDefs().find(d => d.key === colKey);
       const minW = def ? def.minWidth : 40;
 
       const onMove = (ev) => {
@@ -166,7 +180,7 @@ const LogGrid = {
 
   // 自适应列宽（使用 Canvas measureText 替代 DOM）
   autoFitColumn(colKey) {
-    const def = this.columnDefs.find(d => d.key === colKey);
+    const def = this.getAllColDefs().find(d => d.key === colKey);
     if (!def) return;
     let maxWidth = 0;
 
@@ -215,9 +229,30 @@ const LogGrid = {
     this.render();
   },
 
+  // 获取所有条目中有数据的字段集合
+  getActiveFields() {
+    const active = new Set();
+    const stdFields = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
+    const entries = this.entries || [];
+    for (const entry of entries) {
+      for (const field of stdFields) {
+        if (entry[field]) active.add(field);
+      }
+      if (entry.customFields) {
+        for (const key of Object.keys(entry.customFields)) {
+          active.add(key);
+        }
+      }
+      if (active.size >= stdFields.length + 10) break;
+    }
+    return active;
+  },
+
   showColumnMenu(e, key) {
     const existing = document.getElementById('column-context-menu');
     if (existing) existing.remove();
+
+    const activeFields = this.getActiveFields();
 
     const menu = document.createElement('div');
     menu.id = 'column-context-menu';
@@ -225,7 +260,7 @@ const LogGrid = {
     menu.style.left = e.clientX + 'px';
     menu.style.top = e.clientY + 'px';
 
-    for (const def of this.columnDefs) {
+    for (const def of this.getAllColDefs()) {
       if (!def.canHide) {
         const item = document.createElement('div');
         item.className = 'ctx-item ctx-item-disabled';
@@ -233,6 +268,8 @@ const LogGrid = {
         menu.appendChild(item);
         continue;
       }
+      // 只显示有数据的列
+      if (def.key !== 'bookmark' && !activeFields.has(def.key)) continue;
       const item = document.createElement('div');
       item.className = 'ctx-item';
       const hidden = this.hiddenColumns.has(def.key);
@@ -278,7 +315,13 @@ const LogGrid = {
 
   bindEvents() {
     this.gridBody.addEventListener('scroll', () => {
+      this.header.scrollLeft = this.gridBody.scrollLeft;
       this.onScroll();
+    });
+
+    // 同步表头与表格主体的水平滚动
+    this.header.addEventListener('scroll', () => {
+      this.gridBody.scrollLeft = this.header.scrollLeft;
     });
 
     document.addEventListener('keydown', (e) => {
@@ -369,6 +412,43 @@ const LogGrid = {
     this.visibleCount = Math.ceil(this.gridBody.clientHeight / this.rowHeight) + 2;
   },
 
+  // 扫描所有条目，收集 customFields 键名并生成动态列定义
+  rebuildDynamicCols(entries) {
+    const allKeys = new Set();
+    for (let i = 0; i < entries.length; i++) {
+      const cf = entries[i].customFields;
+      if (cf) {
+        for (const key of Object.keys(cf)) {
+          allKeys.add(key);
+        }
+      }
+    }
+    const newDefs = [];
+    // 保持插入顺序
+    const seen = new Set();
+    for (let i = 0; i < entries.length; i++) {
+      const cf = entries[i].customFields;
+      if (cf) {
+        for (const key of Object.keys(cf)) {
+          if (!seen.has(key)) {
+            seen.add(key);
+            const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
+            newDefs.push({
+              key: key,
+              label: key,
+              className: 'col-dynamic col-dynamic-' + safeKey,
+              minWidth: 80,
+              canHide: true,
+              canSort: false,
+              isDynamic: true
+            });
+          }
+        }
+      }
+    }
+    this._dynamicColDefs = newDefs;
+  },
+
   setData(entries) {
     this.entries = entries;
     this.totalRows = entries.length;
@@ -376,9 +456,33 @@ const LogGrid = {
     this.selectedIndex = entries.length > 0 ? 0 : -1;
     this.gridBody.scrollTop = 0;
     this._scrollAnchor = { cssScrollTop: 0, logicalRow: 0 };
+    this.rebuildDynamicCols(entries);
+    this.autoHideEmptyColumns(entries);
+    this.renderHeader();
     this.render();
     App.updateCurrentRow();
     this.updateStatusBar();
+  },
+
+  // 自动隐藏所有条目均为空的列（采样加速）
+  autoHideEmptyColumns(entries) {
+    const stdFields = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
+    const scanLimit = Math.min(entries.length, 200);
+    const step = Math.max(1, Math.floor(entries.length / 200));
+    for (const field of stdFields) {
+      let hasValue = false;
+      for (let i = 0; i < scanLimit; i += step) {
+        if (entries[i][field]) {
+          hasValue = true;
+          break;
+        }
+      }
+      if (!hasValue) {
+        this.hiddenColumns.add(field);
+      } else {
+        this.hiddenColumns.delete(field);
+      }
+    }
   },
 
   // 将当前 scrollTop 转换为可视区域的起始逻辑行号
@@ -448,7 +552,8 @@ const LogGrid = {
     this.calculateVisibleCount();
 
     if (this.totalRows === 0) {
-      this.viewport.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">没有匹配的日志条目</div>';
+      this.header.textContent = '';
+      this.viewport.innerHTML = '<div class="grid-empty"><div class="grid-empty-icon">📭</div><div>没有匹配的日志条目</div><div class="grid-empty-sub">尝试调整筛选条件或加载其他文件</div></div>';
       this.viewport.style.height = 'auto';
       return;
     }
@@ -532,6 +637,13 @@ const LogGrid = {
       html += `<div class="col col-message"${w('message')} title="${this.escapeHtml(msg || '-')}">${this._hlText(msg, 'message', entry.index, hlCache)}</div>`;
     }
 
+    // 动态列（来自 customFields）
+    for (const def of this._dynamicColDefs) {
+      if (!this.isColumnVisible(def.key)) continue;
+      const val = entry.customFields && entry.customFields[def.key] !== undefined ? entry.customFields[def.key] : '-';
+      html += `<div class="col ${def.className}"${w(def.key)} title="${this.escapeHtml(val)}">${this.escapeHtml(val)}</div>`;
+    }
+
     const row = document.createElement('div');
     row.className = cls;
     row.dataset.index = entry.index;
@@ -539,7 +651,6 @@ const LogGrid = {
     row.innerHTML = html;
     row.addEventListener('click', () => {
       this.selectRow(displayIndex);
-      App.showDetail(entry);
     });
     row.addEventListener('dblclick', () => {
       App.toggleBookmark(entry);
@@ -562,9 +673,10 @@ const LogGrid = {
     const highlights = entryHl[field];
     let result = '';
     let lastEnd = 0;
-    for (const h of highlights) {
+    for (let k = 0; k < highlights.length; k++) {
+      const h = highlights[k];
       result += this.escapeHtml(text.slice(lastEnd, h.start));
-      result += `<span class="highlight-match">${this.escapeHtml(text.slice(h.start, h.end))}</span>`;
+      result += '<span class="highlight-match">' + this.escapeHtml(text.slice(h.start, h.end)) + '</span>';
       lastEnd = h.end;
     }
     result += this.escapeHtml(text.slice(lastEnd));
@@ -632,6 +744,6 @@ const LogGrid = {
   },
 
   getVisibleColumnDefs() {
-    return this.columnDefs.filter(d => this.isColumnVisible(d.key));
+    return this.getAllColDefs().filter(d => this.isColumnVisible(d.key));
   }
 };

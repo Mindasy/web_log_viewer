@@ -106,7 +106,12 @@ const Utils = {
   },
 
   closeAllPanels() {
-    document.querySelectorAll('.popup-panel').forEach(p => (p.style.display = 'none'));
+    // 跳过自主管理的弹窗（它们有自己的 overlay 系统）
+    document.querySelectorAll('.popup-panel').forEach(p => {
+      if (p.id !== 'pattern-import' && p.id !== 'pattern-editor') {
+        p.style.display = 'none';
+      }
+    });
     const extraPanels = ['pattern-manager-main', 'pattern-save-panel', 'pattern-manager',
       'highlight-settings-panel', 'column-settings-panel'];
     extraPanels.forEach(id => {
@@ -160,6 +165,18 @@ const Utils = {
     normalized = normalized.replace(/\s([+-])(\d{1,2})(\d{2})(?=\s*$|$)/, (_, sign, hh, mm) => {
       return ' ' + sign + hh.padStart(2, '0') + ':' + mm;
     });
+
+    // 替换文本时区: GMT → +0000, UTC → +0000, EST/EDT → -0500/-0400 等
+    normalized = normalized.replace(/\sGMT(?=\s*$|[^a-zA-Z])/g, ' +0000');
+    normalized = normalized.replace(/\sUTC(?=\s*$|[^a-zA-Z])/g, ' +0000');
+    normalized = normalized.replace(/\sEST(?=\s*$|[^a-zA-Z])/g, ' -0500');
+    normalized = normalized.replace(/\sEDT(?=\s*$|[^a-zA-Z])/g, ' -0400');
+    normalized = normalized.replace(/\sCST(?=\s*$|[^a-zA-Z])/g, ' -0600');
+    normalized = normalized.replace(/\sCDT(?=\s*$|[^a-zA-Z])/g, ' -0500');
+    normalized = normalized.replace(/\sMST(?=\s*$|[^a-zA-Z])/g, ' -0700');
+    normalized = normalized.replace(/\sMDT(?=\s*$|[^a-zA-Z])/g, ' -0600');
+    normalized = normalized.replace(/\sPST(?=\s*$|[^a-zA-Z])/g, ' -0800');
+    normalized = normalized.replace(/\sPDT(?=\s*$|[^a-zA-Z])/g, ' -0700');
 
     // 先尝试原生 Date 解析（支持 ISO 8601 含时区格式）
     const d = new Date(normalized);
@@ -252,5 +269,17 @@ const Utils = {
     // Log4j / generic timestamp
     if (/^\d{4}[-/]\d{2}[-/]\d{2}/.test(trimmed)) return 'log4j';
     return 'plain';
+  },
+
+  // 验证用户正则，返回 { ok, regex, error }
+  validateUserRegex(pattern) {
+    if (!pattern) return { ok: false, regex: null, error: '正则表达式为空' };
+    if (pattern.length > 500) return { ok: false, regex: null, error: '正则表达式过长' };
+    try {
+      const re = new RegExp(pattern);
+      return { ok: true, regex: re, error: null };
+    } catch (e) {
+      return { ok: false, regex: null, error: '正则表达式语法错误: ' + e.message };
+    }
   }
 };
