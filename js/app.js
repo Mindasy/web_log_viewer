@@ -202,6 +202,7 @@ const App = {
     // 级别过滤
     document.querySelectorAll('.filter-chip').forEach(chip => {
       chip.addEventListener('click', (e) => {
+        if (LogParser.entries.length === 0) return;
         const checkbox = chip.querySelector('input');
         checkbox.checked = !checkbox.checked;
         const level = chip.dataset.level;
@@ -979,7 +980,9 @@ const App = {
       // Ctrl+F: 聚焦搜索
       if (e.ctrlKey && e.key === 'f') {
         e.preventDefault();
-        document.getElementById('search-input').focus();
+        const searchInput = document.getElementById('search-input');
+        if (LogParser.entries.length > 0) searchInput.focus();
+        else Utils.showToast('请先打开文件', 'error');
       }
       // F3: 下一个搜索结果
       if (e.key === 'F3') {
@@ -995,8 +998,13 @@ const App = {
       // Ctrl+G: 跳转到行
       if (e.ctrlKey && e.key === 'g') {
         e.preventDefault();
-        document.getElementById('goto-line-input').focus();
-        document.getElementById('goto-line-input').select();
+        const gotoInput = document.getElementById('goto-line-input');
+        if (LogParser.entries.length > 0) {
+          gotoInput.focus();
+          gotoInput.select();
+        } else {
+          Utils.showToast('请先打开文件', 'error');
+        }
       }
       // Escape: 关闭详情面板、内联编辑器或导入对话框
       if (e.key === 'Escape') {
@@ -1665,9 +1673,10 @@ const App = {
         const sourceCount = (LogParser.sourceFiles || []).length;
         document.getElementById('status-file').textContent =
           `${fi.fileCount} 个文件合并 (${sourceCount} 个来源 · ${Utils.formatBytes(fi.size)})`;
-      } else if (fi.isZip) {
+      } else if (fi.isArchive) {
+        const ext = (fi.name || '').split('.').pop().toUpperCase();
         document.getElementById('status-file').textContent =
-          `${fi.name} (ZIP · ${fi.zipFileCount} 个文件)`;
+          `${fi.name} (${ext} · ${fi.archiveFileCount} 个文件)`;
       } else {
         document.getElementById('status-file').textContent =
           `${fi.name} (${Utils.formatBytes(fi.size)})`;
@@ -1688,6 +1697,27 @@ const App = {
       const btn = document.getElementById(id);
       if (btn) btn.disabled = !hasData;
     }
+    // 搜索与跳转相关元素
+    const searchIds = ['search-input', 'btn-search', 'btn-regex', 'btn-case-sensitive',
+                       'btn-whole-word', 'btn-highlight', 'goto-line-input', 'btn-goto-line',
+                       'btn-scroll-top', 'btn-scroll-bottom',
+                       'filter-thread', 'filter-source', 'filter-message',
+                       'filter-time-from', 'filter-time-to', 'btn-advanced-filter'];
+    for (const id of searchIds) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !hasData;
+    }
+    // 级别过滤复选框和标签
+    document.querySelectorAll('.filter-chip input[type="checkbox"]').forEach(cb => {
+      cb.disabled = !hasData;
+    });
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.classList.toggle('disabled', !hasData);
+    });
+    // 无数据时清除搜索统计和行号显示
+    document.getElementById('search-stats').textContent = '';
+    document.getElementById('goto-row-cur').textContent = '-';
+    document.getElementById('goto-row-total').textContent = '-';
   },
 
   // ===== 文件列表面板 =====
@@ -1820,7 +1850,7 @@ const App = {
       fileStats[src] = (fileStats[src] || 0) + 1;
     }
 
-    const zipGroups = {};
+    const archiveGroups = {};
     const standaloneFiles = [];
     const seenNames = new Set();
 
@@ -1828,9 +1858,9 @@ const App = {
       if (seenNames.has(sf.name)) continue;
       seenNames.add(sf.name);
 
-      if (sf.zipName) {
-        if (!zipGroups[sf.zipName]) zipGroups[sf.zipName] = [];
-        zipGroups[sf.zipName].push(sf);
+      if (sf.archiveName) {
+        if (!archiveGroups[sf.archiveName]) archiveGroups[sf.archiveName] = [];
+        archiveGroups[sf.archiveName].push(sf);
       } else {
         standaloneFiles.push(sf);
       }
@@ -1838,12 +1868,13 @@ const App = {
 
     let html = '';
 
-    for (const [zipName, files] of Object.entries(zipGroups)) {
-      html += `<div class="file-group-header" title="${this.escapeHtml(zipName)}">
+    for (const [archiveName, files] of Object.entries(archiveGroups)) {
+      const ext = (archiveName || '').split('.').pop().toUpperCase();
+      html += `<div class="file-group-header" title="${this.escapeHtml(archiveName)}">
         <span class="file-icon">📦</span>
-        <span class="file-name">${this.escapeHtml(zipName)}</span>
-        <span class="file-badge">ZIP</span>
-        <span class="file-close file-group-close" data-zip="${this.escapeHtml(zipName)}">✕</span>
+        <span class="file-name">${this.escapeHtml(archiveName)}</span>
+        <span class="file-badge">${ext}</span>
+        <span class="file-close file-group-close" data-archive="${this.escapeHtml(archiveName)}">✕</span>
       </div>`;
       for (const sf of files) {
         const count = fileStats[sf.name] || 0;
@@ -1884,13 +1915,13 @@ const App = {
       });
     });
 
-    // 关闭文件或ZIP
+    // 关闭压缩包或文件
     container.querySelectorAll('.file-close').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const zipName = btn.dataset.zip;
-        if (zipName) {
-          this.closeZip(zipName);
+        const archiveName = btn.dataset.archive;
+        if (archiveName) {
+          this.closeArchive(archiveName);
         } else {
           const fileName = btn.dataset.file;
           if (fileName) this.closeFile(fileName);
@@ -1921,7 +1952,7 @@ const App = {
       // 只剩一个文件，取消合并状态
       const sf = LogParser.sourceFiles[0];
       LogParser.fileInfo = {
-        name: sf.zipName || sf.name,
+        name: sf.archiveName || sf.name,
         size: totalSize,
         lastModified: sf.lastModified
       };
@@ -1944,18 +1975,15 @@ const App = {
     Utils.showToast(`已关闭文件: ${fileName}`);
   },
 
-  // ===== 关闭整个ZIP包 =====
-  closeZip(zipName) {
-    // 找到该ZIP包下所有sourceFile的name
-    const zipNames = LogParser.sourceFiles
-      .filter(sf => sf.zipName === zipName)
+  // ===== 关闭整个压缩包 =====
+  closeArchive(archiveName) {
+    const archiveNames = LogParser.sourceFiles
+      .filter(sf => sf.archiveName === archiveName)
       .map(sf => sf.name);
-    if (zipNames.length === 0) return;
+    if (archiveNames.length === 0) return;
 
-    // 过滤条目
-    LogParser.entries = LogParser.entries.filter(e => !zipNames.includes(e.sourceFile));
-    // 移除来源
-    LogParser.sourceFiles = LogParser.sourceFiles.filter(sf => sf.zipName !== zipName);
+    LogParser.entries = LogParser.entries.filter(e => !archiveNames.includes(e.sourceFile));
+    LogParser.sourceFiles = LogParser.sourceFiles.filter(sf => sf.archiveName !== archiveName);
 
     // 重新索引
     LogParser.entries.forEach((e, i) => e.index = i);
@@ -1970,7 +1998,7 @@ const App = {
     if (LogParser.sourceFiles.length === 1) {
       const sf = LogParser.sourceFiles[0];
       LogParser.fileInfo = {
-        name: sf.zipName || sf.name,
+        name: sf.archiveName || sf.name,
         size: totalSize,
         lastModified: sf.lastModified
       };
@@ -1988,7 +2016,7 @@ const App = {
     LogGrid.setData(LogParser.entries);
     this.updateFileInfo();
     this.renderFilesList();
-    Utils.showToast(`已关闭ZIP: ${zipName}`);
+    Utils.showToast(`已关闭: ${archiveName}`);
   },
 
   // ===== 刷新 =====
@@ -2184,13 +2212,13 @@ const App = {
     this.savedPresetDateFormats['__loaded'] = p.dateFormat || '';
 
     this.patternManagerOpen = false;
-    this.testCurrentRule();
+    ParseWizard.testCurrentRule();
     Utils.showToast(`已加载 Pattern: ${p.name}`, 'success');
   },
 
   testPatternInEditor() {
     const regexStr = document.getElementById('pe-regex').value.trim();
-    const sample = document.getElementById('pe-sample').value.trim() || this.getCurrentSample();
+    const sample = document.getElementById('pe-sample').value.trim() || ParseWizard.getCurrentSample();
 
     if (!regexStr) { Utils.showToast('请输入正则表达式', 'error'); return; }
 
@@ -2741,9 +2769,9 @@ const ParseWizard = {
 
   // 读取文件预览
   async readFilePreview(file) {
-    // 检测 ZIP 文件
-    if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
-      return this.readZipPreview(file);
+    // 检测压缩包
+    if (ArchiveHandler.isArchive(file.name)) {
+      return ArchiveHandler.getPreviewText(file);
     }
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2755,40 +2783,9 @@ const ParseWizard = {
     });
   },
 
-  // 读取 ZIP 文件预览
+  // 读取压缩包预览（已由 ArchiveHandler 统一处理，保留方法名兼容）
   async readZipPreview(file) {
-    if (typeof JSZip === 'undefined') {
-      throw new Error('JSZip 库未加载');
-    }
-    try {
-      const arrayBuffer = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsArrayBuffer(file);
-      });
-      const zip = await JSZip.loadAsync(arrayBuffer);
-      const allNames = Object.keys(zip.files);
-      const textFiles = allNames.filter(name => {
-        const entry = zip.files[name];
-        if (entry.dir) return false;
-        const lower = name.toLowerCase();
-        return /\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
-               !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower);
-      });
-
-      if (textFiles.length === 0) {
-        throw new Error('ZIP 文件中未找到文本文件');
-      }
-
-      // 读取第一个文本文件的前 200KB 作为预览
-      const firstFile = textFiles[0];
-      const content = await zip.files[firstFile].async('string');
-      const lines = content.split(/\r?\n/).slice(0, 200).join('\n');
-      return lines;
-    } catch (e) {
-      throw new Error('ZIP 预览失败: ' + e.message);
-    }
+    return ArchiveHandler.getPreviewText(file);
   },
 
   // 找最佳样本行

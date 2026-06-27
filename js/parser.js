@@ -65,7 +65,7 @@ const LogParser = {
   // 多文件来源信息
   sourceFiles: [],
 
-  // 解析文件（支持 .zip 自动解压）
+  // 解析文件（支持压缩包自动解压）
   async parseFile(file, config = {}) {
     const cfg = { ...this.config, ...config };
     this.config = cfg;
@@ -74,9 +74,9 @@ const LogParser = {
     this.rawLines = [];
     this.sourceFiles = [];
 
-    // 检测是否为 ZIP 文件
-    if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
-      return await this.parseZipFile(file, cfg);
+    // 检测是否为压缩包（zip / tar / tar.gz / tgz / rar）
+    if (ArchiveHandler.isArchive(file.name)) {
+      return await this.parseArchiveFile(file, cfg);
     }
 
     this.fileInfo = { name: file.name, size: file.size, lastModified: file.lastModified };
@@ -143,94 +143,54 @@ const LogParser = {
     return this.entries.length;
   },
 
-  // 解析 ZIP 压缩文件（优先使用 fflate，回退到 JSZip）
-  async parseZipFile(file, cfg, showProgress = true) {
-    if (typeof fflate === 'undefined' && typeof JSZip === 'undefined') {
-      throw new Error('未加载 ZIP 解析库（需加载 fflate 或 JSZip）');
-    }
-
-    if (showProgress) Utils.showLoading('正在解压 ZIP 文件...');
-
-    const useFflate = typeof fflate !== 'undefined';
+  // 解析压缩文件（通过 ArchiveHandler 统一处理）
+  async parseArchiveFile(file, cfg, showProgress = true) {
+    if (showProgress) Utils.showLoading('正在解压压缩文件...');
 
     let textFiles;
-    if (useFflate) {
-      try {
-        const arrayBuffer = await this.readFileAsArrayBuffer(file);
-        const uint8Array = new Uint8Array(arrayBuffer);
-        const zipFiles = fflate.unzipSync(uint8Array);
-        const allFileNames = Object.keys(zipFiles);
-        textFiles = [];
-        for (const name of allFileNames) {
-          const lower = name.toLowerCase();
-          if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
-              !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
-            textFiles.push({ name, data: zipFiles[name] });
-          }
-        }
-      } catch (e) {
-        if (showProgress) Utils.hideLoading();
-        throw new Error('ZIP 文件解析失败: ' + e.message);
-      }
-    } else {
-      try {
-        const arrayBuffer = await this.readFileAsArrayBuffer(file);
-        const zip = await JSZip.loadAsync(arrayBuffer);
-        const allFileNames = Object.keys(zip.files);
-        textFiles = [];
-        for (const name of allFileNames) {
-          const entry = zip.files[name];
-          if (entry.dir) continue;
-          const lower = name.toLowerCase();
-          if (/\.(log|txt|json|xml|csv|out|err|trace|conf|cfg|properties|yml|yaml)$/.test(lower) ||
-              !/\.(exe|dll|so|dylib|class|jar|war|ear|png|jpg|gif|bmp|ico|mp3|mp4|avi|pdf|doc|xls|ppt|zip|gz|tar|bz2|7z)$/.test(lower)) {
-            textFiles.push({ name, entry, isJszip: true, size: entry._data?.uncompressedSize || 0 });
-          }
-        }
-      } catch (e) {
-        if (showProgress) Utils.hideLoading();
-        throw new Error('ZIP 文件解析失败: ' + e.message);
-      }
+    try {
+      const allFiles = await ArchiveHandler.extract(file);
+      textFiles = allFiles.filter(f => f.isTextFile);
+    } catch (e) {
+      if (showProgress) Utils.hideLoading();
+      throw new Error('压缩文件解析失败: ' + e.message);
     }
 
     if (textFiles.length === 0) {
       if (showProgress) Utils.hideLoading();
-      throw new Error('ZIP 文件中未找到文本日志文件');
+      throw new Error('压缩文件中未找到文本日志文件');
     }
 
+    const ext = file.name.toLowerCase().split('.').pop();
     this.fileInfo = {
       name: file.name,
       size: file.size,
       lastModified: file.lastModified,
-      isZip: true,
-      zipFileCount: textFiles.length
+      isArchive: true,
+      archiveFileCount: textFiles.length
     };
     this.sourceFiles = textFiles.map(f => ({
       name: file.name + '/' + f.name,
       displayName: f.name,
-      zipName: file.name,
-      size: f.data ? f.data.length : (f.size || 0)
+      archiveName: file.name,
+      size: f.size
     }));
 
     const allLines = [];
     const fileLineMap = [];
-    const decoder = new TextDecoder('UTF-8');
+    const encoding = cfg.encoding && cfg.encoding !== 'UTF-8' ? cfg.encoding : 'UTF-8';
+    const decoder = new TextDecoder(encoding);
 
     for (const tf of textFiles) {
       try {
-        let content;
-        if (tf.isJszip) {
-          content = await tf.entry.async('string');
-        } else {
-          content = decoder.decode(tf.data);
-        }
+        const content = decoder.decode(tf.data);
         const lines = content.split(/\r?\n/);
         for (const line of lines) {
           allLines.push(line);
           fileLineMap.push(file.name + '/' + tf.name);
         }
       } catch (e) {
-        console.warn(`无法读取 ZIP 中的文件: ${tf.name}`, e);
+        console.warn(`无法读取压缩包中的文件: ${tf.name}`, e);
       }
     }
 
@@ -628,8 +588,8 @@ const LogParser = {
 
     for (const file of files) {
       try {
-        // 检测是否为 ZIP 文件
-        if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+        // 检测是否为压缩包
+        if (ArchiveHandler.isArchive(file.name)) {
           const savedEntries = this.entries;
           const savedRaw = this.rawLines;
           const savedSrc = this.sourceFiles;
@@ -640,7 +600,7 @@ const LogParser = {
           this.sourceFiles = [];
 
           try {
-            await this.parseZipFile(file, cfg, false);
+            await this.parseArchiveFile(file, cfg, false);
 
             this.entries.forEach(e => {
               if (!e.sourceFile) e.sourceFile = file.name;
