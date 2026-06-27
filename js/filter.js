@@ -133,8 +133,13 @@ const LogFilter = {
 
   // 获取可搜索文本
   getSearchableText(entry) {
-    return [entry.timestamp, entry.level, entry.thread, entry.source, entry.message, entry.raw]
-      .filter(Boolean).join(' ');
+    const parts = [entry.timestamp, entry.level, entry.thread, entry.source, entry.message, entry.raw];
+    if (entry.customFields) {
+      for (const val of Object.values(entry.customFields)) {
+        if (val) parts.push(String(val));
+      }
+    }
+    return parts.filter(Boolean).join(' ');
   },
 
   // 排序（原位排序，不创建副本）
@@ -197,6 +202,21 @@ const LogFilter = {
           if (match.index === re.lastIndex) re.lastIndex++;
         }
         if (matches.length > 0) entryHl[field] = matches;
+      }
+      // 自定义字段高亮
+      if (entry.customFields) {
+        for (const key of Object.keys(entry.customFields)) {
+          const text = entry.customFields[key];
+          if (!text) continue;
+          re.lastIndex = 0;
+          const matches = [];
+          let match;
+          while ((match = re.exec(text)) !== null) {
+            matches.push({ start: match.index, end: match.index + match[0].length });
+            if (match.index === re.lastIndex) re.lastIndex++;
+          }
+          if (matches.length > 0) entryHl['cf:' + key] = matches;
+        }
       }
       if (Object.keys(entryHl).length > 0) cache[entry.index] = entryHl;
     }
