@@ -35,6 +35,8 @@ tar -czf "$PACKAGE_FILE" \
     --exclude='*.zip' \
     --exclude='*.log' \
     --exclude='LICENSE' \
+    --exclude='.index.html' \
+    --exclude='.server.py' \
     index.html \
     server.py \
     css/ \
