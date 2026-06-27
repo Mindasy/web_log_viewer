@@ -464,12 +464,14 @@ const LogGrid = {
     this.updateStatusBar();
   },
 
-  // 自动隐藏所有条目均为空的列
+  // 自动隐藏所有条目均为空的列（采样加速）
   autoHideEmptyColumns(entries) {
     const stdFields = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
+    const scanLimit = Math.min(entries.length, 200);
+    const step = Math.max(1, Math.floor(entries.length / 200));
     for (const field of stdFields) {
       let hasValue = false;
-      for (let i = 0; i < entries.length; i++) {
+      for (let i = 0; i < scanLimit; i += step) {
         if (entries[i][field]) {
           hasValue = true;
           break;
@@ -671,9 +673,10 @@ const LogGrid = {
     const highlights = entryHl[field];
     let result = '';
     let lastEnd = 0;
-    for (const h of highlights) {
+    for (let k = 0; k < highlights.length; k++) {
+      const h = highlights[k];
       result += this.escapeHtml(text.slice(lastEnd, h.start));
-      result += `<span class="highlight-match">${this.escapeHtml(text.slice(h.start, h.end))}</span>`;
+      result += '<span class="highlight-match">' + this.escapeHtml(text.slice(h.start, h.end)) + '</span>';
       lastEnd = h.end;
     }
     result += this.escapeHtml(text.slice(lastEnd));

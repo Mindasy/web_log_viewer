@@ -153,7 +153,11 @@ const App = {
     const searchInput = document.getElementById('search-input');
 
     searchInput.addEventListener('input', Utils.debounce(() => {
-      LogFilter.state.searchText = searchInput.value;
+      const val = searchInput.value;
+      if (val.length > SEARCH_MAX_LENGTH) {
+        Utils.showToast(`搜索内容已截断（上限 ${SEARCH_MAX_LENGTH} 字符）`, 'warn');
+      }
+      LogFilter.state.searchText = val;
       LogFilter.resetSearch();
       this.refresh();
     }, LogParser.entries.length > 50000 ? 400 : 200));
@@ -2218,15 +2222,14 @@ const App = {
 
   testPatternInEditor() {
     const regexStr = document.getElementById('pe-regex').value.trim();
-    const sample = document.getElementById('pe-sample').value.trim() || ParseWizard.getCurrentSample();
-
     if (!regexStr) { Utils.showToast('请输入正则表达式', 'error'); return; }
-
-    let regex;
-    try { regex = new RegExp(regexStr); } catch (e) {
-      Utils.showToast('正则无效: ' + e.message, 'error');
+    const validation = Utils.validateUserRegex(regexStr);
+    if (!validation.ok) {
+      Utils.showToast(validation.error, 'error');
       return;
     }
+    const sample = document.getElementById('pe-sample').value.trim() || ParseWizard.getCurrentSample();
+    let regex = validation.regex;
 
     const match = sample.match(regex);
     if (match && match.groups) {

@@ -79,6 +79,10 @@ const LogParser = {
       return await this.parseArchiveFile(file, cfg);
     }
 
+    if (file.size > 200 * 1024 * 1024) {
+      Utils.showToast('大文件警告: 文件超过 200MB，请使用压缩格式', 'warn');
+    }
+
     this.fileInfo = { name: file.name, size: file.size, lastModified: file.lastModified };
     this.sourceFiles = [{ name: file.name, size: file.size }];
 
@@ -96,7 +100,7 @@ const LogParser = {
     const parser = this.getParser(preset, cfg);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.trim()) continue;
+      if (!line) continue;
       const entry = parser(line, i);
       if (entry) {
         entry.index = this.entries.length;
@@ -129,7 +133,7 @@ const LogParser = {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.trim()) continue;
+      if (!line) continue;
       const entry = parser(line, i);
       if (entry) {
         entry.index = this.entries.length;

@@ -1,5 +1,7 @@
 // filter.js - 过滤和搜索引擎
 
+const SEARCH_MAX_LENGTH = 200;
+
 const LogFilter = {
   // 过滤状态
   state: {
@@ -96,24 +98,26 @@ const LogFilter = {
     return results;
   },
 
-  // 构建搜索正则（带缓存，避免重复构造 RegExp）
+  // 构建搜索正则（不带 g flag，避免 test() 跨字符串陷阱）
   buildSearchRegex() {
     if (!this.state.searchText) return null;
-    const key = `${this.state.searchText}|${this.state.useRegex}|${this.state.caseSensitive}|${this.state.wholeWord}`;
+    const text = this.state.searchText.length > SEARCH_MAX_LENGTH
+      ? this.state.searchText.slice(0, SEARCH_MAX_LENGTH)
+      : this.state.searchText;
+    const key = `${text}|${this.state.useRegex}|${this.state.caseSensitive}|${this.state.wholeWord}`;
     if (this._regexCache && this._regexCacheKey === key) {
       return this._regexCache;
     }
-    let pattern = this.state.searchText;
+    let pattern = text;
     if (!this.state.useRegex) {
       pattern = Utils.escapeRegex(pattern);
     }
     if (this.state.wholeWord) {
       pattern = `\\b${pattern}\\b`;
     }
-    const flags = this.state.caseSensitive ? 'g' : 'gi';
+    this._regexCacheKey = key;
     try {
-      this._regexCache = new RegExp(pattern, flags);
-      this._regexCacheKey = key;
+      this._regexCache = new RegExp(pattern, this.state.caseSensitive ? '' : 'i');
       return this._regexCache;
     } catch {
       this._regexCache = null;
@@ -131,15 +135,17 @@ const LogFilter = {
     }
   },
 
-  // 获取可搜索文本
+  // 获取可搜索文本（结果缓存在 entry 上避免重复拼接）
   getSearchableText(entry) {
+    if (entry._searchText) return entry._searchText;
     const parts = [entry.timestamp, entry.level, entry.thread, entry.source, entry.message, entry.raw];
     if (entry.customFields) {
       for (const val of Object.values(entry.customFields)) {
         if (val) parts.push(String(val));
       }
     }
-    return parts.filter(Boolean).join(' ');
+    entry._searchText = parts.filter(Boolean).join(' ');
+    return entry._searchText;
   },
 
   // 排序（原位排序，不创建副本）
@@ -165,15 +171,15 @@ const LogFilter = {
     return entries;
   },
 
-  // 获取高亮区域
+  // 获取高亮区域（使用独立的 g flag 正则）
   getHighlights(text, field) {
     if (!this.state.highlight || !this.state.searchText) return [];
     if (field && !this.state.highlightFields[field]) return [];
-    const re = this.buildSearchRegex();
+    const re = this._buildHighlightRegex();
     if (!re) return [];
     const matches = [];
-    re.lastIndex = 0;
     let match;
+    re.lastIndex = 0;
     while ((match = re.exec(text)) !== null) {
       matches.push({ start: match.index, end: match.index + match[0].length });
       if (match.index === re.lastIndex) re.lastIndex++;
@@ -181,11 +187,30 @@ const LogFilter = {
     return matches;
   },
 
+  _buildHighlightRegex() {
+    if (!this.state.searchText) return null;
+    const text = this.state.searchText.length > SEARCH_MAX_LENGTH
+      ? this.state.searchText.slice(0, SEARCH_MAX_LENGTH)
+      : this.state.searchText;
+    let pattern = text;
+    if (!this.state.useRegex) {
+      pattern = Utils.escapeRegex(pattern);
+    }
+    if (this.state.wholeWord) {
+      pattern = `\\b${pattern}\\b`;
+    }
+    try {
+      return new RegExp(pattern, this.state.caseSensitive ? 'g' : 'gi');
+    } catch {
+      return null;
+    }
+  },
+
   // 批量计算高亮（用于一次渲染周期内的所有可见行）
   computeBatchHighlights(entries, start, end) {
     if (!this.state.highlight || !this.state.searchText) return null;
     const cache = Object.create(null);
-    const re = this.buildSearchRegex();
+    const re = this._buildHighlightRegex();
     if (!re) return null;
     for (let i = start; i < end; i++) {
       const entry = entries[i];

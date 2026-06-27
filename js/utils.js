@@ -269,5 +269,17 @@ const Utils = {
     // Log4j / generic timestamp
     if (/^\d{4}[-/]\d{2}[-/]\d{2}/.test(trimmed)) return 'log4j';
     return 'plain';
+  },
+
+  // 验证用户正则，返回 { ok, regex, error }
+  validateUserRegex(pattern) {
+    if (!pattern) return { ok: false, regex: null, error: '正则表达式为空' };
+    if (pattern.length > 500) return { ok: false, regex: null, error: '正则表达式过长' };
+    try {
+      const re = new RegExp(pattern);
+      return { ok: true, regex: re, error: null };
+    } catch (e) {
+      return { ok: false, regex: null, error: '正则表达式语法错误: ' + e.message };
+    }
   }
 };

@@ -1,4 +1,6 @@
 /* 压缩文件解析器 —— 统一接口，支持 ZIP / tar / tar.gz(tgz) / RAR */
+const ARCHIVE_MAX_RATIO = 100;
+const ARCHIVE_MAX_UNCOMPRESSED = 1024 * 1024 * 1024;
 
 const ArchiveHandler = {
   // ===== 公开接口 =====
@@ -147,6 +149,10 @@ const ArchiveHandler = {
 
   // ===== 结果统一处理 =====
   _normalizeFiles(fileList, archiveName, isArchive = false) {
+    const totalUncompressed = fileList.reduce((s, f) => s + (f.data ? f.data.length : 0), 0);
+    if (totalUncompressed > ARCHIVE_MAX_UNCOMPRESSED) {
+      throw new Error('压缩包解压后体积过大（超过 1GB），已终止');
+    }
     return fileList
       .filter(f => !this._isHiddenDir(f.name))
       .map(f => ({
