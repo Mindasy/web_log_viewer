@@ -2379,7 +2379,7 @@ const ParseWizard = {
       const firstFile = textFiles[0];
       const content = await zip.files[firstFile].async('string');
       const lines = content.split(/\r?\n/).slice(0, 200).join('\n');
-      return `[ZIP 预览: ${firstFile}]\n${lines}`;
+      return lines;
     } catch (e) {
       throw new Error('ZIP 预览失败: ' + e.message);
     }
