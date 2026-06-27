@@ -69,6 +69,7 @@ const LogParser = {
   async parseFile(file, config = {}) {
     const cfg = { ...this.config, ...config };
     this.config = cfg;
+    this._detectedPreset = null;
     this.entries = [];
     this.rawLines = [];
     this.sourceFiles = [];
@@ -112,6 +113,7 @@ const LogParser = {
   async reparse(config) {
     const cfg = { ...this.config, ...config };
     this.config = cfg;
+    this._detectedPreset = null;
     const oldEntries = this.entries;
     this.entries = [];
 
@@ -291,8 +293,12 @@ const LogParser = {
     });
   },
 
+  // 自动检测结果缓存
+  _detectedPreset: null,
+
   // 自动检测格式
   autoDetect(lines) {
+    if (this._detectedPreset) return this._detectedPreset;
     const samples = lines.filter(l => l.trim()).slice(0, 50);
     const scores = {};
 
@@ -312,9 +318,9 @@ const LogParser = {
       }
     }
 
-    // 映射到预设名
     const map = { log4j: 'log4j', apache: 'apache', syslog: 'syslog', json: 'json', bracketLog: 'bracketLog' };
-    return map[best] || 'generic';
+    this._detectedPreset = map[best] || 'generic';
+    return this._detectedPreset;
   },
 
   // 获取解析器函数

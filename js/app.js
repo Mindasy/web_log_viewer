@@ -1711,9 +1711,9 @@ const App = {
   },
 
   escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (!this._escapeDiv) this._escapeDiv = document.createElement('div');
+    this._escapeDiv.textContent = str;
+    return this._escapeDiv.innerHTML;
   },
 
   // ===== Pattern Manager =====
@@ -2379,7 +2379,7 @@ const ParseWizard = {
       const firstFile = textFiles[0];
       const content = await zip.files[firstFile].async('string');
       const lines = content.split(/\r?\n/).slice(0, 200).join('\n');
-      return `[ZIP 预览: ${firstFile}]\n${lines}`;
+      return lines;
     } catch (e) {
       throw new Error('ZIP 预览失败: ' + e.message);
     }
@@ -3374,9 +3374,9 @@ const ParseWizard = {
   },
 
   escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (!this._escapeDiv) this._escapeDiv = document.createElement('div');
+    this._escapeDiv.textContent = str;
+    return this._escapeDiv.innerHTML;
   }
 };
 

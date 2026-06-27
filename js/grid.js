@@ -164,29 +164,33 @@ const LogGrid = {
     });
   },
 
-  // 自适应列宽
+  // 自适应列宽（使用 Canvas measureText 替代 DOM）
   autoFitColumn(colKey) {
     const def = this.columnDefs.find(d => d.key === colKey);
     if (!def) return;
     let maxWidth = 0;
 
-    // 检查列头标签宽度
+    // 创建共享 Canvas 用于测量文本
+    if (!this._measureCanvas) {
+      this._measureCanvas = document.createElement('canvas');
+      this._measureCtx = this._measureCanvas.getContext('2d');
+    }
+    const ctx = this._measureCtx;
+    ctx.font = '12px monospace';
+
+    const measure = (text) => {
+      if (!text) return 0;
+      return Math.ceil(ctx.measureText(text).width);
+    };
+
+    // 列头标签宽度
     const headerCol = this.header.querySelector(`.${def.className}`);
     if (headerCol) {
       const label = headerCol.querySelector('.col-label');
-      if (label) {
-        const dummy = document.createElement('span');
-        dummy.className = 'col-label';
-        dummy.style.cssText = 'position:fixed;visibility:hidden;left:-9999px;white-space:nowrap;font-size:12px;';
-        dummy.textContent = label.textContent;
-        document.body.appendChild(dummy);
-        maxWidth = Math.max(maxWidth, dummy.offsetWidth + 20);
-        document.body.removeChild(dummy);
-      }
+      if (label) maxWidth = Math.max(maxWidth, measure(label.textContent) + 24);
     }
 
-    // 遍历可见行中的内容，取最大宽度
-    const visibleCol = this.header.querySelector(`.${def.className}`);
+    // 采样内容行
     const sampleSize = Math.min(this.entries.length, 200);
     const step = Math.max(1, Math.floor(this.entries.length / 200));
     for (let i = 0; i < sampleSize; i += step) {
@@ -196,17 +200,11 @@ const LogGrid = {
       else if (colKey === 'bookmark') text = '';
       else text = entry[colKey] || '-';
       if (!text) continue;
-      const dummy = document.createElement('span');
-      dummy.style.cssText = 'position:fixed;visibility:hidden;left:-9999px;white-space:nowrap;font-size:12px;font-family:var(--font-mono, monospace);';
-      dummy.textContent = text;
-      document.body.appendChild(dummy);
-      maxWidth = Math.max(maxWidth, dummy.offsetWidth + 16);
-      document.body.removeChild(dummy);
+      maxWidth = Math.max(maxWidth, measure(text) + 18);
     }
 
     maxWidth = Math.max(maxWidth, def.minWidth);
-    const maxAllowed = 600;
-    maxWidth = Math.min(maxWidth, maxAllowed);
+    maxWidth = Math.min(maxWidth, 600);
 
     this.header.querySelectorAll(`.${def.className}`).forEach(el => {
       el.style.width = maxWidth + 'px';
@@ -321,28 +319,28 @@ const LogGrid = {
     }, 100));
   },
 
-  // 锚点：记录最近一次渲染时 当前scrollTop ↔ 逻辑行号 的映射
-  _scrollAnchor: { cssScrollTop: 0, logicalRow: 0 },
-
-  // 锚点最大信任距离（CSS px），超过此值时用纯比例重新校准
-  _anchorMaxTrust: 3000,
-
-  get _cssHeight() {
-    return Math.min(this.totalRows * this.rowHeight, this.MAX_SAFE_PX);
+  // 总内容真实高度（可能超过 CSS 上限）
+  get _totalHeight() {
+    return this.totalRows * this.rowHeight;
   },
 
-  get _cssRange() {
-    return Math.max(1, this._cssHeight - (this.gridBody.clientHeight || 1));
-  },
-
-  get _logicalRange() {
-    return Math.max(1, this.totalRows * this.rowHeight - (this.gridBody.clientHeight || 1));
+  // 是否超过 CSS 安全上限（需要用比例映射）
+  get _isCapped() {
+    return this._totalHeight > this.MAX_SAFE_PX;
   },
 
   onScroll() {
-    const newScrollTop = this.gridBody.scrollTop;
-    const cssRowH = this._cssRowHeight();
-    const maxScroll = Math.max(0, this._cssHeight - (this.gridBody.clientHeight || 1));
+    if (this._scrollThrottled) return;
+    this._scrollThrottled = true;
+    requestAnimationFrame(() => {
+      this._scrollThrottled = false;
+      this._processScroll(this.gridBody.scrollTop);
+    });
+  },
+
+  _processScroll(newScrollTop) {
+    const clientH = this.gridBody.clientHeight || 1;
+    const maxScroll = Math.max(0, this._isCapped ? this.MAX_SAFE_PX - clientH : this._totalHeight - clientH);
 
     if (newScrollTop <= 1) {
       this.scrollTop = 0;
@@ -352,22 +350,19 @@ const LogGrid = {
     }
     if (newScrollTop >= maxScroll - 1) {
       this.scrollTop = maxScroll;
-      this._scrollAnchor = { cssScrollTop: maxScroll, logicalRow: Math.max(0, this.totalRows - 1) };
+      const lastRow = Math.max(0, this.totalRows - 1);
+      this._scrollAnchor = { cssScrollTop: maxScroll, logicalRow: lastRow };
       this._onScrollFinish();
       return;
     }
 
-    if (Math.abs(newScrollTop - this.scrollTop) < cssRowH) return;
+    if (Math.abs(newScrollTop - this.scrollTop) < 1) return;
     this.scrollTop = newScrollTop;
     this._onScrollFinish();
   },
 
   _onScrollFinish() {
     this.render();
-  },
-
-  _cssRowHeight() {
-    return this._cssHeight / Math.max(1, this.totalRows);
   },
 
   calculateVisibleCount() {
@@ -386,38 +381,47 @@ const LogGrid = {
     this.updateStatusBar();
   },
 
-  // 通过锚点偏移估算逻辑行号（小滚动用），大滚动回退纯比例
+  // 将当前 scrollTop 转换为可视区域的起始逻辑行号
   _cssToLogicalStart(cssScrollTop) {
-    if (this.totalRows === 0) return 0;
+    if (this.totalRows <= 0) return 0;
 
-    const anchor = this._scrollAnchor;
-    const cssDelta = cssScrollTop - anchor.cssScrollTop;
-
-    // 滚动距离小 → 用锚点偏移推算（精度高）
-    if (Math.abs(cssDelta) < this._anchorMaxTrust) {
-      const avgCssRowH = this._cssRowHeight();
-      const rowDelta = Math.round(cssDelta / avgCssRowH);
-      const estimated = anchor.logicalRow + rowDelta;
-      return Math.max(0, Math.min(estimated, this.totalRows - 1));
+    // 未超过 CSS 上限：直接除行号，精确
+    if (!this._isCapped) {
+      return Math.min(Math.max(0, Math.floor(cssScrollTop / this.rowHeight)), this.totalRows - 1);
     }
 
-    // 滚动距离大 → 纯比例重新校准
-    const frac = Math.min(1, Math.max(0, cssScrollTop / this._cssRange));
-    const logicalScrollTop = frac * this._logicalRange;
-    return Math.min(
-      Math.max(0, Math.floor(logicalScrollTop / this.rowHeight)),
-      Math.max(0, this.totalRows - 1)
-    );
+    // 超过 CSS 上限：用锚点偏移推算提高精度，大跳跃时比例校准
+    const anchor = this._scrollAnchor;
+    const cssDelta = cssScrollTop - anchor.cssScrollTop;
+    const clientH = this.gridBody.clientHeight || 1;
+    const cssRange = Math.max(1, this.MAX_SAFE_PX - clientH);
+    const logicalRange = Math.max(1, this._totalHeight - clientH);
+
+    if (Math.abs(cssDelta) < 3000) {
+      const avgRowH = this.MAX_SAFE_PX / this.totalRows;
+      const rowDelta = Math.round(cssDelta / avgRowH);
+      return Math.max(0, Math.min(anchor.logicalRow + rowDelta, this.totalRows - 1));
+    }
+
+    const frac = Math.min(1, Math.max(0, cssScrollTop / cssRange));
+    return Math.min(Math.max(0, Math.floor(frac * logicalRange / this.rowHeight)), this.totalRows - 1);
   },
 
   // 将逻辑行号映射为 css scrollTop
   _logicalToCssScrollTop(displayIndex) {
-    const fraction = Math.min(1, Math.max(0, (displayIndex * this.rowHeight) / this._logicalRange));
-    return fraction * this._cssRange;
+    if (!this._isCapped) {
+      return Math.min(displayIndex * this.rowHeight, Math.max(0, this._totalHeight - (this.gridBody.clientHeight || 1)));
+    }
+    const clientH = this.gridBody.clientHeight || 1;
+    const cssRange = Math.max(1, this.MAX_SAFE_PX - clientH);
+    const logicalRange = Math.max(1, this._totalHeight - clientH);
+    const fraction = Math.min(1, Math.max(0, (displayIndex * this.rowHeight) / logicalRange));
+    return fraction * cssRange;
   },
 
   _updateScrollButtons() {
-    const maxScroll = Math.max(0, this._cssHeight - (this.gridBody.clientHeight || 1));
+    const clientH = this.gridBody.clientHeight || 1;
+    const maxScroll = Math.max(0, this._isCapped ? this.MAX_SAFE_PX - clientH : this._totalHeight - clientH);
     const btnTop = document.getElementById('btn-scroll-top');
     const btnBottom = document.getElementById('btn-scroll-bottom');
     if (!btnTop || !btnBottom) return;
@@ -449,7 +453,7 @@ const LogGrid = {
       return;
     }
 
-    const cssHeight = this._cssHeight;
+    const cssHeight = this._isCapped ? this.MAX_SAFE_PX : this._totalHeight;
 
     // 通过 CSS scrollTop 比例映射到逻辑行号
     const start = this._cssToLogicalStart(this.scrollTop);
@@ -492,107 +496,54 @@ const LogGrid = {
   },
 
   createRow(entry, displayIndex, hlCache) {
+    const cn = ['grid-row'];
+    if (displayIndex === this.selectedIndex) cn.push('selected');
+    if (entry.bookmarked) cn.push('bookmarked');
+    const cls = cn.join(' ');
+
+    const w = (k) => {
+      const v = this.columnWidths[k];
+      return v ? ` style="width:${v}px;min-width:${v}px;flex:none"` : '';
+    };
+
+    let html = '';
+    html += `<div class="col col-index"${w('index')} title="行号: ${entry.index + 1}">${entry.index + 1}</div>`;
+    if (this.isColumnVisible('bookmark')) {
+      html += `<div class="col col-bookmark"${w('bookmark')} title="${entry.bookmarked ? '已添加书签' : ''}">${entry.bookmarked ? '🔖' : ''}</div>`;
+    }
+    if (this.isColumnVisible('timestamp')) {
+      html += `<div class="col col-timestamp"${w('timestamp')} title="${this.escapeHtml(entry.timestamp || '-')}">${this._hlText(entry.timestamp || '-', 'timestamp', entry.index, hlCache)}</div>`;
+    }
+    if (this.isColumnVisible('level')) {
+      const lv = entry.level || '-';
+      html += `<div class="col col-level level-${lv}"${w('level')} title="${lv}">${this._hlText(lv, 'level', entry.index, hlCache)}</div>`;
+    }
+    if (this.isColumnVisible('pid')) {
+      html += `<div class="col col-pid"${w('pid')} title="${this.escapeHtml(entry.pid || '-')}">${this._hlText(entry.pid || '-', 'pid', entry.index, hlCache)}</div>`;
+    }
+    if (this.isColumnVisible('tid')) {
+      html += `<div class="col col-tid"${w('tid')} title="${this.escapeHtml(entry.tid || '-')}">${this._hlText(entry.tid || '-', 'tid', entry.index, hlCache)}</div>`;
+    }
+    if (this.isColumnVisible('source')) {
+      html += `<div class="col col-source"${w('source')} title="${this.escapeHtml(entry.source || '-')}">${this._hlText(entry.source || '-', 'source', entry.index, hlCache)}</div>`;
+    }
+    if (this.isColumnVisible('message')) {
+      const msg = entry.message || entry.raw;
+      html += `<div class="col col-message"${w('message')} title="${this.escapeHtml(msg || '-')}">${this._hlText(msg, 'message', entry.index, hlCache)}</div>`;
+    }
+
     const row = document.createElement('div');
-    row.className = 'grid-row';
+    row.className = cls;
     row.dataset.index = entry.index;
     row.dataset.displayIndex = displayIndex;
-
-    if (displayIndex === this.selectedIndex) {
-      row.classList.add('selected');
-    }
-    if (entry.bookmarked) {
-      row.classList.add('bookmarked');
-    }
-
-    {
-      const col = document.createElement('div');
-      col.className = 'col col-index';
-      col.textContent = entry.index + 1;
-      col.title = `行号: ${entry.index + 1}`;
-      const w = this.columnWidths['index'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('bookmark')) {
-      const col = document.createElement('div');
-      col.className = 'col col-bookmark';
-      col.textContent = entry.bookmarked ? '🔖' : '';
-      col.title = entry.bookmarked ? '已添加书签' : '';
-      const w = this.columnWidths['bookmark'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('timestamp')) {
-      const col = document.createElement('div');
-      col.className = 'col col-timestamp';
-      col.innerHTML = this._hlText(entry.timestamp || '-', 'timestamp', entry.index, hlCache);
-      col.title = entry.timestamp || '-';
-      const w = this.columnWidths['timestamp'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('level')) {
-      const col = document.createElement('div');
-      col.className = `col col-level level-${entry.level}`;
-      col.innerHTML = this._hlText(entry.level || '-', 'level', entry.index, hlCache);
-      col.title = entry.level || '-';
-      const w = this.columnWidths['level'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('pid')) {
-      const col = document.createElement('div');
-      col.className = 'col col-pid';
-      col.innerHTML = this._hlText(entry.pid || '-', 'pid', entry.index, hlCache);
-      col.title = entry.pid || '-';
-      const w = this.columnWidths['pid'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('tid')) {
-      const col = document.createElement('div');
-      col.className = 'col col-tid';
-      col.innerHTML = this._hlText(entry.tid || '-', 'tid', entry.index, hlCache);
-      col.title = entry.tid || '-';
-      const w = this.columnWidths['tid'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('source')) {
-      const col = document.createElement('div');
-      col.className = 'col col-source';
-      col.innerHTML = this._hlText(entry.source || '-', 'source', entry.index, hlCache);
-      col.title = entry.source || '-';
-      const w = this.columnWidths['source'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
-    if (this.isColumnVisible('message')) {
-      const col = document.createElement('div');
-      col.className = 'col col-message';
-      col.innerHTML = this._hlText(entry.message || entry.raw, 'message', entry.index, hlCache);
-      col.title = entry.message || entry.raw || '-';
-      const w = this.columnWidths['message'];
-      if (w) { col.style.width = w + 'px'; col.style.minWidth = w + 'px'; }
-      row.appendChild(col);
-    }
-
+    row.innerHTML = html;
     row.addEventListener('click', () => {
       this.selectRow(displayIndex);
       App.showDetail(entry);
     });
-
     row.addEventListener('dblclick', () => {
       App.toggleBookmark(entry);
     });
-
     return row;
   },
 
@@ -620,27 +571,27 @@ const LogGrid = {
     return result;
   },
 
+  // 共享 escapeHtml div（避免重复创建 DOM）
+  _escapeDiv: null,
+
   escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (!this._escapeDiv) this._escapeDiv = document.createElement('div');
+    this._escapeDiv.textContent = str;
+    return this._escapeDiv.innerHTML;
   },
 
   selectRow(displayIndex) {
     if (displayIndex < 0 || displayIndex >= this.totalRows) return;
     this.selectedIndex = displayIndex;
 
-    const totalHeight = this.totalRows * this.rowHeight;
     const clientH = this.gridBody.clientHeight || 1;
-    const cssHeight = Math.min(totalHeight, this.MAX_SAFE_PX);
+    const cssHeight = this._isCapped ? this.MAX_SAFE_PX : this._totalHeight;
     const maxScroll = Math.max(0, cssHeight - clientH);
 
     const targetScrollTop = this._logicalToCssScrollTop(displayIndex);
-
-    // 确保选中行在可见区域内
-    const cssRowH = this._cssRowHeight();
-    const rowTop = displayIndex * cssRowH;
-    const rowBottom = rowTop + cssRowH;
+    const realRowHeight = this._isCapped ? cssHeight / this.totalRows : this.rowHeight;
+    const rowTop = displayIndex * realRowHeight;
+    const rowBottom = rowTop + realRowHeight;
     const viewTop = this.scrollTop;
     const viewBottom = this.scrollTop + clientH;
 
@@ -655,7 +606,6 @@ const LogGrid = {
     this.gridBody.scrollTop = this.scrollTop;
     this.render();
     App.updateCurrentRow();
-
     if (displayIndex >= 0 && displayIndex < this.entries.length) {
       App.showDetail(this.entries[displayIndex]);
     }

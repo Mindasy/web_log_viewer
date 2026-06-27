@@ -35,57 +35,46 @@ const LogFilter = {
   _regexCache: null,
   _regexCacheKey: '',
 
-  // 应用所有过滤
+  // 应用所有过滤（单次遍历合并）
   apply(entries) {
-    let filtered = entries;
+    const st = this.state;
+    const hasSearch = !!st.searchText;
+    const searchRe = hasSearch ? this.buildSearchRegex() : null;
+    const threadRe = st.threadFilter ? this.buildRegex(st.threadFilter) : null;
+    const sourceRe = st.sourceFilter ? this.buildRegex(st.sourceFilter) : null;
+    const msgRe = st.messageFilter ? this.buildRegex(st.messageFilter) : null;
+    const fromTime = st.timeFrom ? new Date(st.timeFrom).getTime() : null;
+    const toTime = st.timeTo ? new Date(st.timeTo).getTime() : null;
+    const srcFile = st.sourceFileFilter;
 
-    // 级别过滤
-    filtered = filtered.filter(e => this.state.levels[e.level] !== false);
+    const result = [];
+    if (hasSearch) this.searchMatches = [];
 
-    // 搜索文本
-    if (this.state.searchText) {
-      filtered = this.filterBySearch(filtered);
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+
+      if (st.levels[e.level] === false) continue;
+
+      if (hasSearch) {
+        const text = this.getSearchableText(e);
+        if (!searchRe.test(text)) continue;
+        this.searchMatches.push(e);
+      }
+
+      if (threadRe && !threadRe.test(e.thread)) continue;
+      if (sourceRe && !sourceRe.test(e.source)) continue;
+      if (msgRe && !msgRe.test(e.message)) continue;
+      if (fromTime && (!e.date || e.date.getTime() < fromTime)) continue;
+      if (toTime && (!e.date || e.date.getTime() > toTime)) continue;
+      if (srcFile && e.sourceFile !== srcFile) continue;
+
+      result.push(e);
     }
 
-    // 线程过滤
-    if (this.state.threadFilter) {
-      const re = this.buildRegex(this.state.threadFilter);
-      filtered = filtered.filter(e => re.test(e.thread));
+    if (st.sortColumn) {
+      return this.sortEntries(result);
     }
-
-    // 来源过滤
-    if (this.state.sourceFilter) {
-      const re = this.buildRegex(this.state.sourceFilter);
-      filtered = filtered.filter(e => re.test(e.source));
-    }
-
-    // 消息过滤
-    if (this.state.messageFilter) {
-      const re = this.buildRegex(this.state.messageFilter);
-      filtered = filtered.filter(e => re.test(e.message));
-    }
-
-    // 时间范围过滤
-    if (this.state.timeFrom) {
-      const from = new Date(this.state.timeFrom).getTime();
-      filtered = filtered.filter(e => e.date && e.date.getTime() >= from);
-    }
-    if (this.state.timeTo) {
-      const to = new Date(this.state.timeTo).getTime();
-      filtered = filtered.filter(e => e.date && e.date.getTime() <= to);
-    }
-
-    // 来源文件过滤
-    if (this.state.sourceFileFilter) {
-      filtered = filtered.filter(e => e.sourceFile === this.state.sourceFileFilter);
-    }
-
-    // 排序
-    if (this.state.sortColumn) {
-      filtered = this.sortEntries(filtered);
-    }
-
-    return filtered;
+    return result;
   },
 
   // 搜索过滤
@@ -148,11 +137,12 @@ const LogFilter = {
       .filter(Boolean).join(' ');
   },
 
-  // 排序
+  // 排序（原位排序，不创建副本）
   sortEntries(entries) {
+    if (entries.length <= 1) return entries;
     const col = this.state.sortColumn;
     const dir = this.state.sortDirection === 'asc' ? 1 : -1;
-    return [...entries].sort((a, b) => {
+    entries.sort((a, b) => {
       let va = a[col] || '';
       let vb = b[col] || '';
       if (col === 'index') {
@@ -167,6 +157,7 @@ const LogFilter = {
       }
       return (va - vb) * dir;
     });
+    return entries;
   },
 
   // 获取高亮区域
