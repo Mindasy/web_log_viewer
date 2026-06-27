@@ -446,7 +446,10 @@ const App = {
   // ===== 详情面板 =====
   bindDetailPanel() {
     document.getElementById('btn-close-detail').addEventListener('click', () => {
-      document.getElementById('detail-panel').classList.remove('expanded');
+      const panel = document.getElementById('detail-panel');
+      panel.classList.remove('expanded');
+      panel.style.width = '';
+      panel.style.minWidth = '';
     });
 
     document.getElementById('btn-copy-entry').addEventListener('click', () => {
@@ -1095,7 +1098,10 @@ const App = {
     this.bookmarks = [];
     LogFilter.resetSearch();
     LogGrid.setData([]);
-    document.getElementById('detail-panel').classList.remove('expanded');
+    const panel = document.getElementById('detail-panel');
+    panel.classList.remove('expanded');
+    panel.style.width = '';
+    panel.style.minWidth = '';
     document.getElementById('status-file').textContent = '未打开文件';
     document.getElementById('status-encoding').textContent = 'UTF-8';
     document.getElementById('entry-count').textContent = '';
