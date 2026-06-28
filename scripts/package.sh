@@ -8,8 +8,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$ROOT_DIR/output"
 PACKAGE_NAME="weblogviewer"
+UTILS_FILE="$ROOT_DIR/js/utils.js"
 
 VERSION="${1:-}"
+
+# 保存原始 APP_VERSION，打包后恢复
+ORIG_VERSION=$(grep "^const APP_VERSION = " "$UTILS_FILE" | sed "s/^const APP_VERSION = '\(.*\)';/\1/")
+
+# 确保在任何退出路径上都恢复版本号
+cleanup() {
+    if sed -i '' "s/^const APP_VERSION = '.*';/const APP_VERSION = '$ORIG_VERSION';/" "$UTILS_FILE" 2>/dev/null; then
+        :
+    else
+        sed -i "s/^const APP_VERSION = '.*';/const APP_VERSION = '$ORIG_VERSION';/" "$UTILS_FILE"
+    fi
+    echo "↩️  APP_VERSION 已恢复为: $ORIG_VERSION"
+}
+trap cleanup EXIT
 
 # 先用版本号更新 APP_VERSION
 "$ROOT_DIR/scripts/set-version.sh" ${VERSION:+"$VERSION"}
@@ -41,7 +56,6 @@ tar -czf "$PACKAGE_FILE" \
     --exclude='*.log' \
     --exclude='.DS_Store' \
     --exclude='.github' \
-    
     index.html \
     server.py \
     css/ \

@@ -251,6 +251,7 @@ bash scripts/package.sh v1.2.3
 打包脚本会自动：
 1. 调用 `set-version.sh` 更新 `js/utils.js` 中的 `APP_VERSION`
 2. 生成 `output/v1.2.3/weblogviewer.tar.gz`
+3. **将 `js/utils.js` 中的版本号恢复为打包前的值**（通过 `trap cleanup EXIT` 保证，即使脚本中途失败也会恢复）
 
 ### GitHub Release 自动发布
 
