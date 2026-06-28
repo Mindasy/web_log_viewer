@@ -308,6 +308,36 @@ bash scripts/set-version.sh
 bash scripts/set-version.sh 1.2.3
 ```
 
+## PR 验证流水线
+
+每次推送 PR 到 `main` 分支时，`.github/workflows/pr.yml` 自动执行零依赖验证：
+
+| 检查项 | 内容 | 工具 |
+|--------|------|------|
+| HTML 结构 | 标签平衡、关键元素存在性 | Python + 正则 |
+| CSS 结构 | 花括号平衡、双主题变量 | Python |
+| JS 结构 | 文件存在性、`const`声明、引用完整性 | Python + bash |
+| 日志解析 | 7种预设格式对抗样本文件的解析匹配 | Python 正则 |
+
+### 运行方式
+
+```bash
+# 完整检查（含服务器冒烟测试）
+bash test/validate.sh
+
+# 快速检查（跳过服务器）
+bash test/validate.sh --fast
+
+# 仅启动服务器进行手动测试
+bash test/validate.py --server
+```
+
+### 设计原则
+
+- **零外部依赖**：仅使用 Python3 标准库和 bash，无需 npm/pip 安装
+- **纯前端友好**：不引入 Node.js / package.json 等后端工具链
+- **快速反馈**：--fast 模式约 2 秒内完成全部检查
+
 ## 构建与部署
 
 项目为纯静态文件，无需构建。部署只需将整个项目目录复制到 Web 服务器即可。
