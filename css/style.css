@@ -151,13 +151,22 @@ html, body {
   border-bottom: 1px solid var(--border-color);
   height: 36px;
   user-select: none;
+  overflow: hidden;
 }
 .toolbar-group {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
-.toolbar-right { margin-left: auto; }
+.toolbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
 .separator {
   width: 1px;
   height: 18px;
@@ -213,9 +222,26 @@ html, body {
   font-size: 11px;
   padding: 3px 7px;
 }
-.status-text { color: var(--text-muted); font-size: 11px; margin-right: 8px; white-space: nowrap; }
-.entry-count { color: var(--text-secondary); font-size: 11px; }
+.status-text {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 30px;
+}
+.entry-count {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .entry-count:empty { display: none; }
+.status-bar-right {
+  margin-left: auto;
+}
 
 /* ===== Filter Bar ===== */
 #filter-bar {
@@ -229,6 +255,7 @@ html, body {
   align-items: center;
   gap: 6px;
   margin-bottom: 2px;
+  overflow: hidden;
 }
 .filter-row:last-child { margin-bottom: 0; }
 .search-box {
@@ -505,9 +532,13 @@ html, body {
   font-size: 11px;
   font-weight: 600;
   color: var(--accent);
-  min-width: 30px;
+  min-width: 24px;
+  max-width: 80px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .goto-row-sep {
   font-size: 11px;
@@ -517,9 +548,13 @@ html, body {
 .goto-row-total {
   font-size: 11px;
   color: var(--text-muted);
-  min-width: 30px;
+  min-width: 24px;
+  max-width: 80px;
   text-align: left;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .goto-row input {
   width: 95px;
@@ -674,6 +709,7 @@ html, body {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
+  min-height: 0;
   position: relative;
 }
 #grid-viewport {
@@ -992,8 +1028,16 @@ html, body {
   font-size: 11px;
   color: var(--text-muted);
   height: 22px;
+  overflow: hidden;
 }
-#status-file { color: var(--text-secondary); }
+#status-file {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 30px;
+}
 
 /* ===== Popup Panels ===== */
 .popup-panel {
