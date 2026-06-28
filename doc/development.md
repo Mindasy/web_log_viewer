@@ -216,6 +216,67 @@ python3 scripts/generate_archives.py
 - 正则表达式需通过 `Utils.validateUserRegex()` 验证
 - 压缩包解压上限 1GB
 
+## 版本管理
+
+版本号的唯一来源是 **Git tag**（格式 `v1.0.0`）。每次发布通过 tag 触发，自动注入到应用代码中。
+
+### 版本号流转
+
+```
+Git tag v1.2.3
+    │
+    ▼
+scripts/set-version.sh    ← 提取版本号，写入 js/utils.js
+    │                         const APP_VERSION = '1.2.3'
+    ▼
+js/utils.js               ← About 面板动态读取显示
+    │
+    ▼
+scripts/package.sh        ← 打包前自动调用 set-version.sh
+    │
+    ▼
+output/v1.2.3/weblogviewer.tar.gz
+```
+
+### 本地打包
+
+```bash
+# 方式一：从当前 git tag 读取版本
+bash scripts/package.sh
+
+# 方式二：手动指定版本
+bash scripts/package.sh v1.2.3
+```
+
+打包脚本会自动：
+1. 调用 `set-version.sh` 更新 `js/utils.js` 中的 `APP_VERSION`
+2. 生成 `output/v1.2.3/weblogviewer.tar.gz`
+
+### GitHub Release 自动发布
+
+推送 tag 到 GitHub 时，`.github/workflows/release.yml` 自动执行：
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+GitHub Actions 会自动：
+1. 检出代码
+2. 运行 `scripts/package.sh` 注入版本号并打包
+3. 在 Releases 页面创建 Release 并上传 `.tar.gz` 附件
+4. 自动生成 Release Notes
+
+### 单独更新版本号
+
+```bash
+# 从最近的 git tag 读取
+bash scripts/set-version.sh
+
+# 或手动指定
+bash scripts/set-version.sh 1.2.3
+```
+
 ## 构建与部署
 
 项目为纯静态文件，无需构建。部署只需将整个项目目录复制到 Web 服务器即可。

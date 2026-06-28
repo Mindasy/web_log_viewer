@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 打包项目文件到 output 目录
 # 用法:
-#   ./scripts/package.sh                    -> output/weblogviewer.tar.gz
+#   ./scripts/package.sh                    -> output/weblogviewer.tar.gz（版本来自 git tag）
 #   ./scripts/package.sh v1.0.0             -> output/v1.0.0/weblogviewer.tar.gz
 set -euo pipefail
 
@@ -11,12 +11,17 @@ PACKAGE_NAME="weblogviewer"
 
 VERSION="${1:-}"
 
-if [ -n "$VERSION" ]; then
-    TARGET_DIR="$OUTPUT_DIR/$VERSION"
-else
-    TARGET_DIR="$OUTPUT_DIR"
-fi
+# 先用版本号更新 APP_VERSION
+"$ROOT_DIR/scripts/set-version.sh" ${VERSION:+"$VERSION"}
 
+# 从 git tag 读取版本（不含 v 前缀）用于目录命名
+if [ -z "$VERSION" ]; then
+    VERSION=$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null || echo "dev")
+fi
+VERSION="${VERSION#v}"
+TAG_DIR="v$VERSION"
+
+TARGET_DIR="$OUTPUT_DIR/$TAG_DIR"
 mkdir -p "$TARGET_DIR"
 
 PACKAGE_FILE="$TARGET_DIR/${PACKAGE_NAME}.tar.gz"
@@ -34,12 +39,13 @@ tar -czf "$PACKAGE_FILE" \
     --exclude='scripts' \
     --exclude='*.zip' \
     --exclude='*.log' \
-    --exclude='LICENSE' \
-    --exclude='.index.html' \
-    --exclude='.server.py' \
+    --exclude='.DS_Store' \
+    --exclude='.github' \
+    
     index.html \
     server.py \
     css/ \
+    doc/ \
     lib/ \
     js/ \
 
