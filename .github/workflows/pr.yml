@@ -1,0 +1,21 @@
+name: PR 验证
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 运行验证
+        run: |
+          bash test/validate.sh --fast --force
