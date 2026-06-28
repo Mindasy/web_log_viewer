@@ -226,16 +226,27 @@ python3 scripts/generate_archives.py
 Git tag v1.2.3
     │
     ▼
-scripts/set-version.sh    ← 提取版本号，写入 js/utils.js
-    │                         const APP_VERSION = '1.2.3'
-    ▼
-js/utils.js               ← About 面板动态读取显示
+.github/workflows/release.yml    ← GitHub Actions 自动触发
     │
-    ▼
-scripts/package.sh        ← 打包前自动调用 set-version.sh
+    ├── scripts/set-version.sh    ← 提取版本号，写入 js/utils.js
+    │       │                        const APP_VERSION = '1.2.3'
+    │       ▼
+    │   js/utils.js               ← About 面板动态读取显示
+    │       │
+    │       ▼
+    │   scripts/package.sh        ← 打包
+    │       │
+    │       ├── output/v1.2.3/weblogviewer.tar.gz  ← Release 附件
+    │       │
+    │       └── 解压到 Pages 目录
+    │               │
+    │               ▼
+    │           GitHub Pages      ← 部署到 https://user.github.io/web_log_viewer/
     │
-    ▼
-output/v1.2.3/weblogviewer.tar.gz
+    └── softprops/action-gh-release
+            │
+            ▼
+        GitHub Releases 页面      ← Release Notes + tar.gz 下载
 ```
 
 ### 本地打包
@@ -253,7 +264,7 @@ bash scripts/package.sh v1.2.3
 2. 生成 `output/v1.2.3/weblogviewer.tar.gz`
 3. **将 `js/utils.js` 中的版本号恢复为打包前的值**（通过 `trap cleanup EXIT` 保证，即使脚本中途失败也会恢复）
 
-### GitHub Release 自动发布
+### GitHub Release + Pages 自动发布
 
 推送 tag 到 GitHub 时，`.github/workflows/release.yml` 自动执行：
 
@@ -265,8 +276,27 @@ git push origin v1.2.3
 GitHub Actions 会自动：
 1. 检出代码
 2. 运行 `scripts/package.sh` 注入版本号并打包
-3. 在 Releases 页面创建 Release 并上传 `.tar.gz` 附件
-4. 自动生成 Release Notes
+3. 将打包后的内容解压，部署到 **GitHub Pages**
+4. 在 Releases 页面创建 Release 并上传 `.tar.gz` 附件
+5. 自动生成 Release Notes
+
+### 切换到基于 Release 的 Pages 部署
+
+如果要替换原来的 main 分支自动部署，需要修改仓库设置：
+
+1. 进入仓库 **Settings → Pages**
+2. 在 **Build and deployment** 部分，将 **Source** 从 `Deploy from a branch` 改为 `GitHub Actions`
+3. 保存后，后续只有推送 `v*` tag 才会触发 Pages 部署
+4. （可选）删除原有的 main 分支部署工作流（如 `pages.yml` 或 `.github/workflows/static.yml`）
+
+#### 新旧对比
+
+| 项目 | 旧方案 | 新方案 |
+|------|--------|--------|
+| 触发方式 | push 到 main | push tag `v*` |
+| 部署内容 | main 分支最新代码 | Release 打包后的版本化代码 |
+| 版本 | 无版本信息 | 注入 `v1.2.3` 版本号 |
+| 同时创建 Release | ❌ 否 | ✅ 是 |
 
 ### 单独更新版本号
 

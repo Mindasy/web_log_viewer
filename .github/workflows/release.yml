@@ -7,10 +7,19 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,6 +35,13 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "archive=output/v${VERSION}/weblogviewer.tar.gz" >> $GITHUB_OUTPUT
+          echo "pages_dir=output/v${VERSION}/pages" >> $GITHUB_OUTPUT
+
+      - name: 解压到 Pages 目录
+        run: |
+          mkdir -p "${{ steps.version.outputs.pages_dir }}"
+          tar -xzf "${{ steps.version.outputs.archive }}" \
+            -C "${{ steps.version.outputs.pages_dir }}"
 
       - name: 创建 Release 附件
         uses: softprops/action-gh-release@v2
@@ -35,3 +51,15 @@ jobs:
           fail_on_unmatched_files: true
           make_latest: true
           generate_release_notes: true
+
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 Pages 工件
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.version.outputs.pages_dir }}
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
