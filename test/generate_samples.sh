@@ -145,6 +145,14 @@ EOF
 # ===== 主流程 =====
 echo "校验测试样本..."
 
+if [ "$FORCE" = true ]; then
+  echo "  强制重新生成..."
+  clean_samples
+  echo ""
+  do_generate
+  exit 0
+fi
+
 if [ "$CHECK_ONLY" = true ]; then
   if validate_samples; then
     echo "  所有样本验证通过 ✅"
@@ -153,14 +161,6 @@ if [ "$CHECK_ONLY" = true ]; then
     echo "  样本校验失败"
     exit 1
   fi
-fi
-
-if [ "$FORCE" = true ]; then
-  echo "  强制重新生成..."
-  clean_samples
-  echo ""
-  do_generate
-  exit 0
 fi
 
 if validate_samples; then
