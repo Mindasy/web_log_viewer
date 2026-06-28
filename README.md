@@ -28,9 +28,7 @@ Web Log Viewer 是一个纯浏览器端运行的日志查看与分析工具。�
 
 ## 预览
 
-<p align="center">
-  <img src="doc/preview-merged.png" alt="Web Log Viewer 预览 - 左上方深色主题，右下方亮色主题" width="800">
-</p>
+![预览图片](doc/preview-merged.png)
 
 ## 核心功能
 
