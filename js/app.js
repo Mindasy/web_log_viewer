@@ -1687,9 +1687,14 @@ const App = {
     const cur = document.getElementById('goto-row-cur');
     const total = document.getElementById('goto-row-total');
     if (!cur || !total) return;
-    if (LogGrid.totalRows === 0 || LogGrid.selectedIndex < 0) {
+    if (LogGrid.totalRows === 0) {
       cur.textContent = '-';
       total.textContent = '-';
+      return;
+    }
+    if (LogGrid.selectedIndex < 0) {
+      cur.textContent = '-';
+      total.textContent = LogGrid.totalRows;
       return;
     }
     cur.textContent = LogGrid.selectedIndex + 1;
@@ -1747,8 +1752,12 @@ const App = {
     });
     // 无数据时清除搜索统计和行号显示
     document.getElementById('search-stats').textContent = '';
-    document.getElementById('goto-row-cur').textContent = '-';
-    document.getElementById('goto-row-total').textContent = '-';
+    if (!hasData) {
+      document.getElementById('goto-row-cur').textContent = '-';
+      document.getElementById('goto-row-total').textContent = '-';
+    } else {
+      this.updateCurrentRow();
+    }
   },
 
   // ===== 文件列表面板 =====
