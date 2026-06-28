@@ -83,6 +83,7 @@ def _(t, flags):
             continue
 
         lines = open(fpath, encoding='utf-8').read().splitlines()
+        print(f"     解析 {fname} ({fmt}) - {len(lines)} 行原始数据...")
         actual = count_matches(lines, fmt)
         t.check(actual == expected, f"{fname}: 解析 {actual}/{expected} 行")
 

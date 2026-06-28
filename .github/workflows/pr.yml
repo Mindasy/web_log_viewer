@@ -18,4 +18,4 @@ jobs:
 
       - name: 运行验证
         run: |
-          bash test/validate.sh --fast
+          bash test/validate.sh --fast --force
