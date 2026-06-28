@@ -133,6 +133,12 @@ const App = {
     // 文件输入
     document.getElementById('btn-theme-toggle').addEventListener('click', () => this.toggleTheme());
 
+    // 帮助 / 关于
+    document.getElementById('btn-help').addEventListener('click', () => this.showHelpPanel());
+    document.getElementById('btn-about').addEventListener('click', () => this.showAboutPanel());
+    document.getElementById('btn-close-help').addEventListener('click', () => this.closeHelpPanel());
+    document.getElementById('btn-close-about').addEventListener('click', () => this.closeAboutPanel());
+
     document.getElementById('file-input').addEventListener('change', (e) => {
       if (e.target.files.length > 0) {
         this.openFiles(e.target.files);
@@ -1233,6 +1239,27 @@ const App = {
         }
       });
     });
+  },
+
+  // ===== 帮助面板 =====
+  showHelpPanel() {
+    document.getElementById('help-panel').style.display = 'flex';
+    Utils.showOverlay();
+  },
+  closeHelpPanel() {
+    document.getElementById('help-panel').style.display = 'none';
+    Utils.hideOverlay();
+  },
+
+  // ===== 关于面板 =====
+  showAboutPanel() {
+    document.getElementById('about-version').textContent = APP_VERSION;
+    document.getElementById('about-panel').style.display = 'flex';
+    Utils.showOverlay();
+  },
+  closeAboutPanel() {
+    document.getElementById('about-panel').style.display = 'none';
+    Utils.hideOverlay();
   },
 
   // ===== 统计面板 =====

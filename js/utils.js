@@ -1,5 +1,7 @@
 // utils.js - 工具函数
 
+const APP_VERSION = '1.0.0';
+
 const Utils = {
   // 格式化字节数
   formatBytes(bytes) {

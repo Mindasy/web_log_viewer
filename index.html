@@ -31,6 +31,9 @@
     <button id="btn-parser-config" title="解析器配置">⚙️ 解析器</button>
     <button id="btn-open-pm-main" title="Pattern 管理">📋 Pattern</button>
     <span class="separator"></span>
+    <button id="btn-help" title="帮助">❓ 帮助</button>
+    <button id="btn-about" title="关于">ℹ️ 关于</button>
+    <span class="separator"></span>
     <button id="btn-theme-toggle" title="切换主题">🌙 主题</button>
   </div>
   <div class="toolbar-group toolbar-right">
@@ -886,6 +889,94 @@
       </div>
     </div>
   </div>
+
+<!-- 帮助面板 -->
+<div id="help-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>❓ 帮助</span>
+    <button id="btn-close-help">✕</button>
+  </div>
+  <div class="popup-body">
+    <div class="help-section">
+      <h3>快速入门</h3>
+      <p>点击「📂 打开」或拖放日志文件到窗口即可开始分析。支持 <code>.log</code>、<code>.txt</code>、<code>.zip</code>、<code>.tar.gz</code>、<code>.tgz</code> 等格式。</p>
+    </div>
+    <div class="help-section">
+      <h3>搜索与过滤</h3>
+      <ul>
+        <li><strong>搜索</strong> — 输入关键词实时过滤，支持正则模式、大小写敏感、全词匹配</li>
+        <li><strong>级别过滤</strong> — 点击 FATAL / ERROR / WARN / INFO / DEBUG / TRACE 标签切换</li>
+        <li><strong>高级过滤</strong> — 按线程、来源、消息内容、时间范围精确过滤</li>
+        <li><strong>搜索结果导航</strong> — <kbd>F3</kbd> / <kbd>Shift+F3</kbd> 跳转上/下一个匹配</li>
+      </ul>
+    </div>
+    <div class="help-section">
+      <h3>快捷键</h3>
+      <table class="help-shortcuts">
+        <tr><td><kbd>Ctrl+O</kbd></td><td>打开文件</td></tr>
+        <tr><td><kbd>Ctrl+B</kbd></td><td>添加/删除书签</td></tr>
+        <tr><td><kbd>Ctrl+F</kbd></td><td>聚焦搜索</td></tr>
+        <tr><td><kbd>Ctrl+G</kbd></td><td>跳转到行</td></tr>
+        <tr><td><kbd>Ctrl+S</kbd></td><td>导出过滤结果</td></tr>
+        <tr><td><kbd>F3</kbd></td><td>下一个搜索结果</td></tr>
+        <tr><td><kbd>Shift+F3</kbd></td><td>上一个搜索结果</td></tr>
+        <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>上/下一行</td></tr>
+        <tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>上/下一页</td></tr>
+        <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>首行 / 末行</td></tr>
+        <tr><td><kbd>Escape</kbd></td><td>关闭当前面板</td></tr>
+      </table>
+    </div>
+    <div class="help-section">
+      <h3>跳转语法</h3>
+      <table class="help-shortcuts">
+        <tr><td><code>42</code></td><td>跳转到第 42 行</td></tr>
+        <tr><td><code>#5</code></td><td>第 5 个搜索结果</td></tr>
+        <tr><td><code>@3</code></td><td>第 3 个书签</td></tr>
+        <tr><td><code>$</code></td><td>末行</td></tr>
+        <tr><td><code>+50</code></td><td>向后 50 行</td></tr>
+        <tr><td><code>-20</code></td><td>向前 20 行</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 关于面板 -->
+<div id="about-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>ℹ️ 关于 Web Log Viewer</span>
+    <button id="btn-close-about">✕</button>
+  </div>
+  <div class="popup-body about-body">
+    <div class="about-logo">📋</div>
+    <div class="about-info">
+      <p><strong>Web Log Viewer</strong></p>
+      <p>版本 <span id="about-version">1.0.0</span></p>
+      <p>纯浏览器端日志查看与分析工具</p>
+      <p class="about-desc">所有解析、搜索、过滤操作均在浏览器本地完成，数据不会离开你的设备。</p>
+    </div>
+    <div class="about-links">
+      <a href="https://github.com/mindasy/web_log_viewer" target="_blank" rel="noopener noreferrer" class="about-link">
+        <span class="about-link-icon">📦</span>
+        <span>GitHub 仓库</span>
+      </a>
+      <a href="doc/features.md" target="_blank" rel="noopener noreferrer" class="about-link">
+        <span class="about-link-icon">📖</span>
+        <span>功能介绍</span>
+      </a>
+      <a href="doc/install.md" target="_blank" rel="noopener noreferrer" class="about-link">
+        <span class="about-link-icon">📥</span>
+        <span>安装指南</span>
+      </a>
+      <a href="doc/development.md" target="_blank" rel="noopener noreferrer" class="about-link">
+        <span class="about-link-icon">🔧</span>
+        <span>开发文档</span>
+      </a>
+    </div>
+    <div class="about-footer">
+      <p>基于 <a href="https://github.com/yourusername/web_log_viewer/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a> 开源</p>
+    </div>
+  </div>
+</div>
 
 <!-- 隐藏的文件输入 -->
 <input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
