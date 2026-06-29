@@ -16,6 +16,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 运行验证
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: 运行全量验证（含重型 250w 行解析测试）
         run: |
           bash test/validate.sh --fast --force
