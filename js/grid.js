@@ -5,20 +5,19 @@ const LogGrid = {
   viewport: null,
   gridBody: null,
   header: null,
+  scrollbar: null,
+  scrollbarThumb: null,
 
   // 虚拟滚动状态
   rowHeight: 24,
   visibleCount: 0,
-  scrollTop: 0,
+  _virtualRow: 0,       // 当前视口顶部的逻辑行号（替代 scrollTop）
   totalRows: 0,
   renderedRange: { start: 0, end: 0 },
 
   // 数据
   entries: [],
   selectedIndex: -1,
-
-  // CSS safe 像素上限（超过此值浏览器精度丢失）
-  MAX_SAFE_PX: 33000000,
 
   // 列定义
   columnDefs: [
@@ -56,9 +55,95 @@ const LogGrid = {
     this.viewport = document.getElementById('grid-viewport');
     this.gridBody = document.getElementById('grid-body');
     this.header = document.getElementById('grid-header');
+    this.initScrollbar();
     this.bindEvents();
     this.calculateVisibleCount();
     this.renderEmptyState();
+  },
+
+  // ===== 合成滚动条 =====
+  initScrollbar() {
+    this.scrollbar = document.getElementById('grid-scrollbar');
+    this.scrollbarThumb = document.getElementById('grid-scrollbar-thumb');
+    if (!this.scrollbar || !this.scrollbarThumb) return;
+
+    // 点击轨道跳转
+    this.scrollbar.addEventListener('mousedown', (e) => {
+      if (e.target === this.scrollbarThumb) return;
+      const rect = this.scrollbar.getBoundingClientRect();
+      const frac = (e.clientY - rect.top) / rect.height;
+      this._virtualRow = Math.round(frac * (this.totalRows - 1));
+      this._virtualRow = Math.max(0, Math.min(this._virtualRow, this.totalRows - 1));
+      this._syncNativeScroll();
+      this.render();
+    });
+
+    // 拖拽滑块
+    this.scrollbarThumb.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startRow = this._virtualRow;
+      const trackHeight = this.gridBody.clientHeight || 1;
+
+      const onMove = (ev) => {
+        const dy = ev.clientY - startY;
+        const rowDelta = Math.round((dy / trackHeight) * Math.max(1, this.totalRows - 1));
+        this._virtualRow = Math.max(0, Math.min(startRow + rowDelta, this.totalRows - 1));
+        this._syncNativeScroll();
+        this.render();
+      };
+
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  },
+
+  _renderScrollbar() {
+    if (!this.scrollbar || !this.scrollbarThumb) return;
+    if (this.totalRows <= 1) {
+      this.scrollbar.style.display = 'none';
+      return;
+    }
+    this.scrollbar.style.display = 'block';
+    this.scrollbarThumb.style.display = 'block';
+
+    // 与 grid-body 的可视区域对齐
+    const panel = this.scrollbar.parentElement;
+    if (panel) {
+      const bodyRect = this.gridBody.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      this.scrollbar.style.top = (bodyRect.top - panelRect.top) + 'px';
+      this.scrollbar.style.height = this.gridBody.clientHeight + 'px';
+    }
+
+    const trackH = this.gridBody.clientHeight || 1;
+    const thumbRatio = Math.min(1, this.visibleCount / this.totalRows);
+    const thumbH = Math.max(20, thumbRatio * trackH);
+    const thumbPos = (this._virtualRow / Math.max(1, this.totalRows - 1)) * (trackH - thumbH);
+
+    this.scrollbarThumb.style.height = thumbH + 'px';
+    this.scrollbarThumb.style.transform = 'translateY(' + thumbPos + 'px)';
+  },
+
+  // 合成滚动条 → 原生 scrollTop 同步
+  _syncNativeScroll() {
+    const clientH = this.gridBody.clientHeight || 1;
+    this.gridBody.scrollTop = ScrollMath.syncToNative(this._virtualRow, this.totalRows, clientH);
+  },
+
+  // 原生 scrollTop → 合成滚动条同步
+  _syncFromNativeScroll() {
+    const clientH = this.gridBody.clientHeight || 1;
+    this._virtualRow = ScrollMath.syncFromNative(this.gridBody.scrollTop, this.totalRows, clientH);
+  },
+
+  _getCSSHeight() {
+    return ScrollMath.getCSSHeight(this.totalRows);
   },
 
   renderEmptyState() {
@@ -373,50 +458,14 @@ const LogGrid = {
     }, 100));
   },
 
-  // 总内容真实高度（可能超过 CSS 上限）
-  get _totalHeight() {
-    return this.totalRows * this.rowHeight;
-  },
-
-  // 是否超过 CSS 安全上限（需要用比例映射）
-  get _isCapped() {
-    return this._totalHeight > this.MAX_SAFE_PX;
-  },
-
   onScroll() {
     if (this._scrollThrottled) return;
     this._scrollThrottled = true;
     requestAnimationFrame(() => {
       this._scrollThrottled = false;
-      this._processScroll(this.gridBody.scrollTop);
+      this._syncFromNativeScroll();
+      this.render();
     });
-  },
-
-  _processScroll(newScrollTop) {
-    const clientH = this.gridBody.clientHeight || 1;
-    const maxScroll = Math.max(0, this._isCapped ? this.MAX_SAFE_PX - clientH : this._totalHeight - clientH);
-
-    if (newScrollTop <= 1) {
-      this.scrollTop = 0;
-      this._scrollAnchor = { cssScrollTop: 0, logicalRow: 0 };
-      this._onScrollFinish();
-      return;
-    }
-    if (newScrollTop >= maxScroll - 1) {
-      this.scrollTop = maxScroll;
-      const lastRow = Math.max(0, this.totalRows - 1);
-      this._scrollAnchor = { cssScrollTop: maxScroll, logicalRow: lastRow };
-      this._onScrollFinish();
-      return;
-    }
-
-    if (Math.abs(newScrollTop - this.scrollTop) < 1) return;
-    this.scrollTop = newScrollTop;
-    this._onScrollFinish();
-  },
-
-  _onScrollFinish() {
-    this.render();
   },
 
   calculateVisibleCount() {
@@ -463,10 +512,9 @@ const LogGrid = {
   setData(entries) {
     this.entries = entries;
     this.totalRows = entries.length;
-    this.scrollTop = 0;
+    this._virtualRow = 0;
     this.selectedIndex = entries.length > 0 ? 0 : -1;
     this.gridBody.scrollTop = 0;
-    this._scrollAnchor = { cssScrollTop: 0, logicalRow: 0 };
     this.rebuildDynamicCols(entries);
     this.autoHideEmptyColumns(entries);
     this.renderHeader();
@@ -498,47 +546,7 @@ const LogGrid = {
     }
   },
 
-  // 将当前 scrollTop 转换为可视区域的起始逻辑行号
-  _cssToLogicalStart(cssScrollTop) {
-    if (this.totalRows <= 0) return 0;
-
-    // 未超过 CSS 上限：直接除行号，精确
-    if (!this._isCapped) {
-      return Math.min(Math.max(0, Math.floor(cssScrollTop / this.rowHeight)), this.totalRows - 1);
-    }
-
-    // 超过 CSS 上限：用锚点偏移推算提高精度，大跳跃时比例校准
-    const anchor = this._scrollAnchor;
-    const cssDelta = cssScrollTop - anchor.cssScrollTop;
-    const clientH = this.gridBody.clientHeight || 1;
-    const cssRange = Math.max(1, this.MAX_SAFE_PX - clientH);
-    const logicalRange = Math.max(1, this._totalHeight - clientH);
-
-    if (Math.abs(cssDelta) < 3000) {
-      const avgRowH = this.MAX_SAFE_PX / this.totalRows;
-      const rowDelta = Math.round(cssDelta / avgRowH);
-      return Math.max(0, Math.min(anchor.logicalRow + rowDelta, this.totalRows - 1));
-    }
-
-    const frac = Math.min(1, Math.max(0, cssScrollTop / cssRange));
-    return Math.min(Math.max(0, Math.floor(frac * logicalRange / this.rowHeight)), this.totalRows - 1);
-  },
-
-  // 将逻辑行号映射为 css scrollTop
-  _logicalToCssScrollTop(displayIndex) {
-    if (!this._isCapped) {
-      return Math.min(displayIndex * this.rowHeight, Math.max(0, this._totalHeight - (this.gridBody.clientHeight || 1)));
-    }
-    const clientH = this.gridBody.clientHeight || 1;
-    const cssRange = Math.max(1, this.MAX_SAFE_PX - clientH);
-    const logicalRange = Math.max(1, this._totalHeight - clientH);
-    const fraction = Math.min(1, Math.max(0, (displayIndex * this.rowHeight) / logicalRange));
-    return fraction * cssRange;
-  },
-
   _updateScrollButtons() {
-    const clientH = this.gridBody.clientHeight || 1;
-    const maxScroll = Math.max(0, this._isCapped ? this.MAX_SAFE_PX - clientH : this._totalHeight - clientH);
     const btnTop = document.getElementById('btn-scroll-top');
     const btnBottom = document.getElementById('btn-scroll-bottom');
     if (!btnTop || !btnBottom) return;
@@ -549,8 +557,8 @@ const LogGrid = {
       return;
     }
 
-    btnTop.style.display = this.scrollTop <= 1 ? 'none' : 'flex';
-    btnBottom.style.display = this.scrollTop >= maxScroll - 1 ? 'none' : 'flex';
+    btnTop.style.display = this._virtualRow <= 1 ? 'none' : 'flex';
+    btnBottom.style.display = this._virtualRow >= this.totalRows - this.visibleCount - 1 ? 'none' : 'flex';
   },
 
   jumpToTop() {
@@ -571,10 +579,9 @@ const LogGrid = {
       return;
     }
 
-    const cssHeight = this._isCapped ? this.MAX_SAFE_PX : this._totalHeight;
+    const cssHeight = this._getCSSHeight();
 
-    // 通过 CSS scrollTop 比例映射到逻辑行号
-    const start = this._cssToLogicalStart(this.scrollTop);
+    const start = this._virtualRow;
     const end = Math.min(start + this.visibleCount + 5, this.totalRows);
     this.renderedRange = { start, end };
 
@@ -587,7 +594,8 @@ const LogGrid = {
 
     const rowsHeight = (end - start) * this.rowHeight;
     const maxTopSpacerHeight = Math.max(0, cssHeight - rowsHeight);
-    const topSpacerHeight = Math.min(this.scrollTop, maxTopSpacerHeight);
+    const nativeSt = this.gridBody.scrollTop;
+    const topSpacerHeight = Math.min(nativeSt, maxTopSpacerHeight);
     const bottomSpacerHeight = Math.max(0, cssHeight - topSpacerHeight - rowsHeight);
 
     const topSpacer = document.createElement('div');
@@ -609,8 +617,8 @@ const LogGrid = {
     this.viewport.textContent = '';
     this.viewport.appendChild(fragment);
 
-    // 更新锚点：记录当前位置 → 逻辑行号的映射
-    this._scrollAnchor = { cssScrollTop: this.scrollTop, logicalRow: start };
+    this._renderScrollbar();
+    this._updateScrollButtons();
   },
 
   createRow(entry, displayIndex, hlCache) {
@@ -709,24 +717,18 @@ const LogGrid = {
     if (displayIndex < 0 || displayIndex >= this.totalRows) return;
     this.selectedIndex = displayIndex;
 
-    const clientH = this.gridBody.clientHeight || 1;
-    const cssHeight = this._isCapped ? this.MAX_SAFE_PX : this._totalHeight;
-    const maxScroll = Math.max(0, cssHeight - clientH);
+    // 行级比较：仅当目标行不在当前可视范围内才滚动
+    const renderStart = this._virtualRow;
+    const renderEnd = renderStart + this.visibleCount;
+    const visibleRows = Math.max(1, renderEnd - renderStart);
 
-    const realRowHeight = this._isCapped ? cssHeight / this.totalRows : this.rowHeight;
-    const rowTop = displayIndex * realRowHeight;
-    const rowBottom = rowTop + realRowHeight;
-    const viewTop = this.scrollTop;
-    const viewBottom = this.scrollTop + clientH;
-
-    if (rowTop < viewTop) {
-      this.scrollTop = Math.max(0, rowTop);
-    } else if (rowBottom > viewBottom) {
-      this.scrollTop = Math.min(rowBottom - clientH, maxScroll);
+    if (displayIndex < renderStart) {
+      this._virtualRow = displayIndex;
+    } else if (displayIndex >= renderEnd) {
+      this._virtualRow = Math.min(displayIndex - visibleRows + 1, this.totalRows - visibleRows);
     }
-    // 已在可视区域内，不做滚动跳转
 
-    this.gridBody.scrollTop = this.scrollTop;
+    this._syncNativeScroll();
     this.render();
     App.updateCurrentRow();
     if (displayIndex >= 0 && displayIndex < this.entries.length) {

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 EXAMPLE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'example')
 LINES_PER_FILE = 100000
-NUM_ZIPS = 7
+NUM_ZIPS = 25
 TIMEZONE_OFFSET = '+0800'
 
 LEVELS = ['FATAL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
