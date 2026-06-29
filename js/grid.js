@@ -471,6 +471,7 @@ const LogGrid = {
   },
 
   // 自动隐藏所有条目均为空的列（采样加速）
+  // 注意：只负责隐藏空的列，不干预用户已手动操作的列显示状态
   autoHideEmptyColumns(entries) {
     const stdFields = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
     const scanLimit = Math.min(entries.length, 200);
@@ -485,8 +486,6 @@ const LogGrid = {
       }
       if (!hasValue) {
         this.hiddenColumns.add(field);
-      } else {
-        this.hiddenColumns.delete(field);
       }
     }
   },
