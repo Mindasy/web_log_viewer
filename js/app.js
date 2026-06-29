@@ -1828,8 +1828,8 @@ const App = {
       list.innerHTML = '';
       for (const def of LogGrid.getAllColDefs()) {
         if (def.key === 'bookmark') continue; // skip bookmark, handled below
-        // 只显示有数据的列（index 和 canHide=false 始终显示）
-        if (def.canHide && def.key !== 'bookmark' && !activeFields.has(def.key)) continue;
+        // 动态列才需要检查是否有数据；标准列始终显示在列管理器中
+        if (def.canHide && def.isDynamic && !activeFields.has(def.key)) continue;
         const label = document.createElement('label');
         label.className = 'cs-column' + (!def.canHide ? ' cs-disabled' : '');
         if (def.key !== 'index' && def.key !== 'bookmark') label.dataset.col = def.key;
@@ -1862,6 +1862,7 @@ const App = {
           } else {
             LogGrid.hiddenColumns.add(col);
           }
+          LogGrid._userModifiedColumns.add(col);
           LogGrid.renderHeader();
           App.refresh();
         });
