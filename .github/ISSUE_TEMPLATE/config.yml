@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用帮助 / Usage Help
+    url: https://github.com/Mindasy/web_log_viewer?tab=readme-ov-file#readme
+    about: 先查阅 README 和文档，常见问题可能有现成解答
