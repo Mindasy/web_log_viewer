@@ -43,6 +43,9 @@ const LogGrid = {
   // 列隐藏状态
   hiddenColumns: new Set(),
 
+  // 用户手动操作过的列（autoHideEmptyColumns 跳过它们，不再干预）
+  _userModifiedColumns: new Set(),
+
   // 自定义列宽
   columnWidths: {},
 
@@ -274,8 +277,8 @@ const LogGrid = {
         menu.appendChild(item);
         continue;
       }
-      // 只显示有数据的列
-      if (def.key !== 'bookmark' && !activeFields.has(def.key)) continue;
+      // 动态列才需要检查是否有数据；标准列始终显示
+      if (def.isDynamic && !activeFields.has(def.key)) continue;
       const item = document.createElement('div');
       item.className = 'ctx-item';
       const hidden = this.hiddenColumns.has(def.key);
@@ -286,6 +289,7 @@ const LogGrid = {
         } else {
           this.hiddenColumns.add(def.key);
         }
+        this._userModifiedColumns.add(def.key);
         this.renderHeader();
         this.render();
         menu.remove();
@@ -302,6 +306,7 @@ const LogGrid = {
     showAll.textContent = '☑ 显示全部';
     showAll.addEventListener('click', () => {
       this.hiddenColumns.clear();
+      this._userModifiedColumns.clear();
       this.renderHeader();
       this.render();
       menu.remove();
@@ -471,12 +476,13 @@ const LogGrid = {
   },
 
   // 自动隐藏所有条目均为空的列（采样加速）
-  // 注意：只负责隐藏空的列，不干预用户已手动操作的列显示状态
+  // 注意：跳过用户手动操作过的列（_userModifiedColumns），不干预用户的选择
   autoHideEmptyColumns(entries) {
     const stdFields = ['timestamp', 'level', 'pid', 'tid', 'tag', 'source', 'message'];
     const scanLimit = Math.min(entries.length, 200);
     const step = Math.max(1, Math.floor(entries.length / 200));
     for (const field of stdFields) {
+      if (this._userModifiedColumns.has(field)) continue;
       let hasValue = false;
       for (let i = 0; i < scanLimit; i += step) {
         if (this._hasFieldValue(entries[i][field])) {
@@ -486,6 +492,8 @@ const LogGrid = {
       }
       if (!hasValue) {
         this.hiddenColumns.add(field);
+      } else {
+        this.hiddenColumns.delete(field);
       }
     }
   },
