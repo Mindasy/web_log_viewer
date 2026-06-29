@@ -8,6 +8,9 @@ import webbrowser
 
 PORT = 8765
 
+class ReuseAddrServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=os.path.dirname(os.path.abspath(__file__)), **kwargs)
@@ -16,7 +19,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         print(f"[{self.log_date_time_string()}] {args[0]}")
 
 if __name__ == '__main__':
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+    with ReuseAddrServer(("", PORT), Handler) as httpd:
         url = f"http://localhost:{PORT}"
         print(f"Web view logger's Web 已启动: {url}")
         print("按 Ctrl+C 停止服务器")
