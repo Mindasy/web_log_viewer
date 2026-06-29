@@ -226,7 +226,13 @@ const LogGrid = {
       if (colKey !== 'message') el.style.flex = 'none';
     });
     this.columnWidths[colKey] = maxWidth;
+    this.renderHeader();
     this.render();
+  },
+
+  // 判断字段值是否有实际内容（避免 0 / false 等 falsy 值被误判）
+  _hasFieldValue(v) {
+    return v !== undefined && v !== null && v !== '';
   },
 
   // 获取所有条目中有数据的字段集合
@@ -236,7 +242,7 @@ const LogGrid = {
     const entries = this.entries || [];
     for (const entry of entries) {
       for (const field of stdFields) {
-        if (entry[field]) active.add(field);
+        if (this._hasFieldValue(entry[field])) active.add(field);
       }
       if (entry.customFields) {
         for (const key of Object.keys(entry.customFields)) {
@@ -472,7 +478,7 @@ const LogGrid = {
     for (const field of stdFields) {
       let hasValue = false;
       for (let i = 0; i < scanLimit; i += step) {
-        if (entries[i][field]) {
+        if (this._hasFieldValue(entries[i][field])) {
           hasValue = true;
           break;
         }
