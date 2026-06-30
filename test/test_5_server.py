@@ -36,6 +36,8 @@ def _(t, flags):
             '日志面板': 'id="log-panel"',
             '网格头部': 'id="grid-header"',
             '状态栏': 'id="status-bar"',
+            '关于面板': 'id="about-panel"',
+            '发布构建时间': 'id="about-release-time"',
         }
         for name, marker in key_checks.items():
             t.check(marker in html, f"页面包含 {name}")

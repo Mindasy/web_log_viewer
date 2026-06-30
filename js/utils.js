@@ -1,7 +1,7 @@
 // utils.js - 工具函数
 
 const APP_VERSION = '1.0.0';
-const APP_BUILD_TIME = '1971/01/01 00:00:00';
+const APP_RELEASE_TIME = '1971/01/01 00:00:00';
 
 const Utils = {
   // 格式化字节数
