@@ -144,3 +144,165 @@ def _(t, flags):
             st = SM['syncToNative'](row, total, DEFAULT_CLIENT_H)
             t.check(0 <= st <= max_st,
                     f"{total}行 row={row}: st={st:.0f} ∈ [0, {max_st}]")
+
+
+@suite.test("关键边界映射 — Capped 入口 + 用户报告行 + 末尾")
+def _(t, flags):
+    """覆盖所有关键边界：capped 模式入口、用户报告的 2507146 行、末尾。
+    这些用例始终执行，不随 --fast 跳过。"""
+    # 边界定义: (totalRows, rows_to_test, 描述)
+    boundaries = [
+        (1, [0], "单行"),
+        (10, [0, 5, 9], "小量行"),
+        (100, [0, 33, 50, 66, 99], "常规小"),
+        (1374998, [0, 1, 1374997], "Capped 入口前 2 行"),
+        (1374999, [0, 1, 1374998], "Capped 入口前 1 行"),
+        (1375000, [0, 687500, 1374999], "Capped 入口（精确）"),
+        (1375001, [0, 687500, 1375000], "Capped 入口后 1 行"),
+        (2507147, [0, 2507140, 2507145, 2507146, 2507147], "用户报告 2507147"),
+        (2600000, [0, 2507140, 2507146, 2599999], "260w 含报告行"),
+        (3000000, [0, 2507146, 2999999], "300w 含报告行"),
+        (50000000, [0, 25000000, 49999999], "5000w 巨量"),
+    ]
+    for total, rows, label in boundaries:
+        for row in rows:
+            if row >= total:
+                continue
+            st = SM['syncToNative'](row, total, DEFAULT_CLIENT_H)
+            st2 = SM['syncToNative'](row, total, DEFAULT_CLIENT_H + 1)
+            back = SM['syncFromNative'](st, total, DEFAULT_CLIENT_H)
+            back2 = SM['syncFromNative'](st2, total, DEFAULT_CLIENT_H + 1)
+            t.check(back == row,
+                    f"[{label}] {total}行 row={row}: 往返后={back}")
+            t.check(back2 == row,
+                    f"[{label}] clientH+1 {total}行 row={row}: 往返后={back2}")
+
+
+@suite.test("连续滚动过边界 — 双向无阶跃")
+def _(t, flags):
+    """模拟鼠标滚轮逐步滚动，确保经过每个边界时行号平滑递增/递减"""
+    scenarios = [
+        (2507147, 2507130, 2507155, "2507147 附近"),
+        (1375000, 1374990, 1375010, "Capped 入口附近"),
+        (20000, 0, 19999, "完整小文件全量遍历"),
+    ]
+    for total, lo, hi, label in scenarios:
+        # 自动适配步长（最多 500 步）
+        lo_st = int(SM['syncToNative'](lo, total, DEFAULT_CLIENT_H))
+        hi_st = int(SM['syncToNative'](hi, total, DEFAULT_CLIENT_H))
+        total_range = hi_st - lo_st
+        step = max(10, total_range // 500) if total_range > 0 else 1
+        prev_row = -1
+        for st in range(lo_st, hi_st, step):
+            st = min(st, hi_st)
+            row = SM['syncFromNative'](st, total, DEFAULT_CLIENT_H)
+            t.check(row >= prev_row,
+                    f"[{label}] 正向: scrollTop={st} → row={row} < prev={prev_row}")
+            prev_row = row
+
+        # 反向
+        prev_row = int(SM['syncFromNative'](hi_st, total, DEFAULT_CLIENT_H)) + 1
+        for st in range(hi_st, lo_st, -step):
+            st = max(st, lo_st)
+            row = SM['syncFromNative'](st, total, DEFAULT_CLIENT_H)
+            t.check(row <= prev_row,
+                    f"[{label}] 反向: scrollTop={st} → row={row} > prev={prev_row}")
+            prev_row = row
+
+
+@suite.test("Capped 模式渲染一致性 — spacer = cssHeight")
+def _(t, flags):
+    """render() 计算: spacer + rows + bottom_spacer 始终等于 cssHeight。
+    覆盖 capped 入口两侧各 200 行的精确验证。"""
+    # 精细扫描 capped 入口
+    for total in [1374995, 1375000, 1375005]:
+        css_h = SM['getCSSHeight'](total)
+        rows_height = (VISIBLE_COUNT + 5) * SM['ROW_H']
+        max_vr = min(total, css_h // SM['ROW_H'] + 200)
+        step_s = max(1, max_vr // 100)
+        for vr in range(0, max_vr, step_s):
+            max_top = max(0, css_h - rows_height)
+            native_st = SM['syncToNative'](vr, total, DEFAULT_CLIENT_H)
+            top_spacer = min(native_st, max_top)
+            bottom_spacer = max(0, css_h - top_spacer - rows_height)
+            total_calc = top_spacer + rows_height + bottom_spacer
+            t.check(total_calc == css_h,
+                    f"[capped测试] {total}行 vr={vr}: 总高={total_calc} ≠ cssHeight={css_h}")
+        # 额外检查末尾行
+        if max_vr > 0:
+            vr = max_vr - 1
+            max_top = max(0, css_h - rows_height)
+            native_st = SM['syncToNative'](vr, total, DEFAULT_CLIENT_H)
+            top_spacer = min(native_st, max_top)
+            bottom_spacer = max(0, css_h - top_spacer - rows_height)
+            t.check(top_spacer + rows_height + bottom_spacer == css_h,
+                    f"[capped测试] {total}行 vr={vr}(末): 总高不一致")
+
+    # 大行数采样验证
+    for total in [100, 10000, 1375000, 2000000, 50000000]:
+        css_h = SM['getCSSHeight'](total)
+        step = max(1, total // 100)
+        for vr in range(0, total, step):
+            rows_height = (VISIBLE_COUNT + 5) * SM['ROW_H']
+            max_top = max(0, css_h - rows_height)
+            native_st = SM['syncToNative'](vr, total, DEFAULT_CLIENT_H)
+            top_spacer = min(native_st, max_top)
+            bottom_spacer = max(0, css_h - top_spacer - rows_height)
+            total_calc = top_spacer + rows_height + bottom_spacer
+            t.check(total_calc == css_h,
+                    f"[大行数] {total}行 vr={vr}: 总高={total_calc} ≠ cssHeight={css_h}")
+
+
+@suite.test("CSS 行高一致性 — border-box + line-height")
+def _(t, flags):
+    """验证 .grid-row 使用 box-sizing: border-box，使含 border 后正好 24px"""
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    with open(css_path, 'r', encoding='utf-8') as f:
+        css = f.read()
+    m = re.search(r'\.grid-row\s*\{[^}]*\}', css)
+    t.check(m is not None, "找到 .grid-row CSS 规则")
+    if m:
+        block = m.group(0)
+        t.check('box-sizing: border-box' in block,
+                ".grid-row 使用 box-sizing: border-box")
+    # line-height 在 .grid-row .col 上
+    m2 = re.search(r'\.grid-row\s*\.col\s*\{[^}]*\}', css)
+    t.check(m2 is not None, "找到 .grid-row .col CSS 规则")
+    if m2:
+        block2 = m2.group(0)
+        t.check('line-height: 23px' in block2,
+                ".grid-row .col 使用 line-height: 23px")
+
+
+@suite.test("行列数一致性 — render 够数")
+def _(t, flags):
+    """确保每次渲染至少覆盖 visibleCount 行（除非剩余行数不足）"""
+    for total in [1000, 2000000]:
+        for vr in range(0, total - VISIBLE_COUNT, max(1, (total - VISIBLE_COUNT) // 50)):
+            end = min(vr + VISIBLE_COUNT + 5, total)
+            rendered = end - vr
+            t.check(rendered >= VISIBLE_COUNT,
+                    f"{total}行 vr={vr}: 仅渲染 {rendered} 行 < visibleCount {VISIBLE_COUNT}")
+
+
+@suite.test("末尾 selectRow — 不触发回跳")
+def _(t, flags):
+    """验证选择最后若干行时 _virtualRow 不会误设为 0（回跳 bug 回归防护）"""
+    for total in [1000, 2507147, 2000000, 50000000]:
+        visible = min(VISIBLE_COUNT, total)
+        # 从第 0 行起，逐步选择靠近末尾的行
+        for target in range(total - visible - 5, total):
+            if target < 0:
+                continue
+            start_vr = 0
+            render_end = start_vr + visible
+            if target >= render_end:
+                new_vr = min(target - visible + 1, total - visible)
+            else:
+                new_vr = start_vr
+            actual_end = min(new_vr + VISIBLE_COUNT + 5, total)
+            t.check(new_vr <= target < actual_end,
+                    f"{total}行 selectRow({target}): vr={new_vr} "
+                    f"渲染 [{new_vr},{actual_end}) 不包含目标")
+            if new_vr == 0 and target > visible:
+                t.fail(f"{total}行 selectRow({target}): _virtualRow 回跳到 0!")

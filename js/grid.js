@@ -594,8 +594,9 @@ const LogGrid = {
 
     const rowsHeight = (end - start) * this.rowHeight;
     const maxTopSpacerHeight = Math.max(0, cssHeight - rowsHeight);
-    const nativeSt = this.gridBody.scrollTop;
-    const topSpacerHeight = Math.min(nativeSt, maxTopSpacerHeight);
+    const clientH = this.gridBody.clientHeight || 1;
+    const expectedNativeSt = ScrollMath.syncToNative(this._virtualRow, this.totalRows, clientH);
+    const topSpacerHeight = Math.min(expectedNativeSt, maxTopSpacerHeight);
     const bottomSpacerHeight = Math.max(0, cssHeight - topSpacerHeight - rowsHeight);
 
     const topSpacer = document.createElement('div');
