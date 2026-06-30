@@ -1254,7 +1254,9 @@ const App = {
   // ===== 关于面板 =====
   showAboutPanel() {
     document.getElementById('about-version').textContent = APP_VERSION;
-    document.getElementById('about-build-time').textContent = APP_BUILD_TIME;
+    const t = APP_RELEASE_TIME;
+    document.getElementById('about-release-time').textContent =
+      t && t !== '1971/01/01 00:00:00' ? t + ' CST' : t;
     document.getElementById('about-panel').style.display = 'flex';
     Utils.showOverlay();
   },

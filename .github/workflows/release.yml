@@ -9,6 +9,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  deployments: write
 
 concurrency:
   group: "pages"
@@ -73,6 +74,17 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ steps.version.outputs.pages_dir }}
+
+      - name: 清理旧 Pages 部署
+        run: |
+          gh api repos/${{ github.repository }}/deployments?environment=github-pages \
+            --jq '.[] | select(.status != "inactive") | .id' | \
+          while read id; do
+            echo "→ 标记部署 $id 为 inactive"
+            gh api repos/${{ github.repository }}/deployments/$id/statuses \
+              -f state=inactive -f description="已由新部署替换" --silent
+          done
+          echo "✅ 旧部署已清理"
 
       - name: 部署到 GitHub Pages
         id: deployment

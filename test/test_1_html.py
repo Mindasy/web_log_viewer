@@ -40,6 +40,6 @@ def _(t, flags):
 
     key_ids = ['toolbar', 'filter-bar', 'log-panel', 'grid-header',
                'grid-body', 'status-bar', 'file-input', 'btn-open',
-               'about-version', 'about-build-time']
+               'about-version', 'about-release-time']
     for eid in key_ids:
         t.check(f'id="{eid}"' in html, f"关键元素 #{eid} 存在")

@@ -31,8 +31,8 @@ def _(t, flags):
         if js_rel == 'js/utils.js':
             if 'const APP_VERSION' not in js:
                 issues.append("缺少 APP_VERSION 常量")
-            if 'const APP_BUILD_TIME' not in js:
-                issues.append("缺少 APP_BUILD_TIME 常量")
+            if 'const APP_RELEASE_TIME' not in js:
+                issues.append("缺少 APP_RELEASE_TIME 常量")
 
         brace_diff = abs(js.count('{') - js.count('}'))
         if brace_diff > 20:
