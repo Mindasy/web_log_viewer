@@ -752,6 +752,7 @@ html, body {
   height: 24px;
   cursor: pointer;
   border-bottom: 1px solid rgba(var(--border-rgb),0.25);
+  box-sizing: border-box;
   transition: background var(--transition-fast);
 }
 .grid-row:nth-child(even) { background: var(--row-stripe); }
@@ -774,6 +775,7 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 23px;
 }
 .grid-row .col-index { text-align: right; color: var(--text-muted); font-size: 11px; }
 .grid-row .col-bookmark { text-align: center; font-size: 11px; }
