@@ -22,6 +22,7 @@ def _(t, flags):
     t.check(':root {' in css, "深色主题 :root 变量存在")
     t.check('[data-theme="light"]' in css, "亮色主题变量存在")
 
-    key_selectors = ['#toolbar', '#status-bar', '.grid-row', '.popup-panel']
+    key_selectors = ['#toolbar', '#status-bar', '.grid-row', '.popup-panel',
+                     '.about-build-time']
     for sel in key_selectors:
         t.check(sel in css, f"选择器 {sel} 存在")

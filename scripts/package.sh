@@ -12,21 +12,46 @@ UTILS_FILE="$ROOT_DIR/js/utils.js"
 
 VERSION="${1:-}"
 
-# 保存原始 APP_VERSION，打包后恢复
-ORIG_VERSION=$(grep "^const APP_VERSION = " "$UTILS_FILE" | sed "s/^const APP_VERSION = '\(.*\)';/\1/")
+# 用 Python 替换文件中的常量值（跨平台兼容，避免 sed 差异）
+_replace_const() {
+    local name="$1" value="$2" file="$3"
+    python3 -c "
+import re
+with open('$file') as f: content = f.read()
+content = re.sub(r\"^const $name = '.*';\", \"const $name = '$value';\", content, count=1, flags=re.MULTILINE)
+with open('$file', 'w') as f: f.write(content)
+"
+}
 
-# 确保在任何退出路径上都恢复版本号
+_read_const() {
+    local name="$1" file="$2"
+    python3 -c "
+import re
+with open('$file') as f:
+    m = re.search(r\"^const $name = '(.*)';\", f.read(), re.MULTILINE)
+    print(m.group(1) if m else '')
+"
+}
+
+# 保存原始 APP_VERSION 和 APP_BUILD_TIME，打包后恢复
+ORIG_VERSION=$(_read_const "APP_VERSION" "$UTILS_FILE")
+ORIG_BUILD_TIME=$(_read_const "APP_BUILD_TIME" "$UTILS_FILE")
+
+# 确保在任何退出路径上都恢复
 cleanup() {
-    if sed -i '' "s/^const APP_VERSION = '.*';/const APP_VERSION = '$ORIG_VERSION';/" "$UTILS_FILE" 2>/dev/null; then
-        :
-    else
-        sed -i "s/^const APP_VERSION = '.*';/const APP_VERSION = '$ORIG_VERSION';/" "$UTILS_FILE"
-    fi
+    _replace_const "APP_VERSION" "$ORIG_VERSION" "$UTILS_FILE"
+    _replace_const "APP_BUILD_TIME" "$ORIG_BUILD_TIME" "$UTILS_FILE"
     echo "↩️  APP_VERSION 已恢复为: $ORIG_VERSION"
+    echo "↩️  APP_BUILD_TIME 已恢复为: $ORIG_BUILD_TIME"
 }
 trap cleanup EXIT
 
-# 先用版本号更新 APP_VERSION
+# 注入构建时间
+BUILD_TIME=$(date "+%Y/%m/%d %H:%M:%S")
+_replace_const "APP_BUILD_TIME" "$BUILD_TIME" "$UTILS_FILE"
+echo "📦 APP_BUILD_TIME 已注入为: $BUILD_TIME"
+
+# 用版本号更新 APP_VERSION
 "$ROOT_DIR/scripts/set-version.sh" ${VERSION:+"$VERSION"}
 
 # 从 git tag 读取版本（不含 v 前缀）用于目录命名

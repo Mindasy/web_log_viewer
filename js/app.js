@@ -1254,6 +1254,7 @@ const App = {
   // ===== 关于面板 =====
   showAboutPanel() {
     document.getElementById('about-version').textContent = APP_VERSION;
+    document.getElementById('about-build-time').textContent = APP_BUILD_TIME;
     document.getElementById('about-panel').style.display = 'flex';
     Utils.showOverlay();
   },

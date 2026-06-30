@@ -34,12 +34,13 @@ else
     echo "⚠️  版本号格式不符合 semver（期望 x.y.z），仍将继续: $VERSION"
 fi
 
-# 替换 APP_VERSION
-if sed -i '' "s/^const APP_VERSION = '.*';/const APP_VERSION = '$VERSION';/" "$UTILS_FILE" 2>/dev/null; then
-    :
-else
-    sed -i "s/^const APP_VERSION = '.*';/const APP_VERSION = '$VERSION';/" "$UTILS_FILE"
-fi
+# 用 Python 替换 APP_VERSION（跨平台兼容）
+python3 -c "
+import re
+with open('$UTILS_FILE') as f: content = f.read()
+content = re.sub(r\"^const APP_VERSION = '.*';\", \"const APP_VERSION = '$VERSION';\", content, count=1, flags=re.MULTILINE)
+with open('$UTILS_FILE', 'w') as f: f.write(content)
+"
 
 echo "✅ APP_VERSION 已更新为: $VERSION"
 echo "   文件: $UTILS_FILE"
