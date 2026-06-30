@@ -3108,6 +3108,7 @@ html, body {
 .about-logo { font-size: 36px; margin-bottom: 8px; }
 .about-info p { margin-bottom: 3px; }
 .about-info p:first-child { font-size: 15px; color: var(--text-primary); }
+.about-build-time { font-size: 11px; color: var(--text-muted); }
 .about-desc {
   font-size: 11px;
   color: var(--text-muted);
