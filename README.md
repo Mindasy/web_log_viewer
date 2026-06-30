@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/badge/Edge-90%2B-brightgreen" alt="Edge">
   <img src="https://img.shields.io/badge/Safari-15%2B-brightgreen" alt="Safari">
   <img src="https://img.shields.io/badge/size-~1.2MB-blueviolet" alt="Size">
-  <img src="https://img.shields.io/badge/PRs-welcome-ff69b4" alt="PRs Welcome">
+  <img src="https://github.com/Mindasy/web_log_viewer/actions/workflows/release.yml/badge.svg" alt="Release" />
 </p>
 
 Web Log Viewer 是一个纯浏览器端运行的日志查看与分析工具。所有解析、搜索、过滤操作均在浏览器本地完成，**数据不会离开你的设备**。
