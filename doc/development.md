@@ -96,8 +96,7 @@ app.js (onDataLoaded)
   sourceFile: 'app.log',  // 来源文件名
   customFields: {        // 自定义字段（JSON / 自定义正则）
     requestId: 'req-123'
-  },
-  _searchText: '缓存的搜索文本'  // 过滤缓存
+  }
 }
 ```
 
@@ -120,7 +119,7 @@ app.js (onDataLoaded)
 
 - **状态驱动**: `LogFilter.state` 包含所有过滤条件
 - **单次遍历**: `apply(entries)` 在一个 for 循环中完成所有过滤条件的检查
-- **搜索缓存**: `_regexCache` 缓存 RegExp 对象，`entry._searchText` 缓存拼接文本
+- **搜索**: `getSearchableText(entry)` 直接使用 `entry.raw`（完整原始行），无需缓存拼接
 - **安全**: 搜索输入截断 200 字符防 ReDoS
 
 ### grid.js — 虚拟滚动表格

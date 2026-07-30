@@ -135,17 +135,9 @@ const LogFilter = {
     }
   },
 
-  // 获取可搜索文本（结果缓存在 entry 上避免重复拼接）
+  // 获取可搜索文本（entry.raw 包含完整原始行，无需拼接缓存）
   getSearchableText(entry) {
-    if (entry._searchText) return entry._searchText;
-    const parts = [entry.timestamp, entry.level, entry.thread, entry.source, entry.message, entry.raw];
-    if (entry.customFields) {
-      for (const val of Object.values(entry.customFields)) {
-        if (val) parts.push(String(val));
-      }
-    }
-    entry._searchText = parts.filter(Boolean).join(' ');
-    return entry._searchText;
+    return entry.raw || '';
   },
 
   // 排序（原位排序，不创建副本）

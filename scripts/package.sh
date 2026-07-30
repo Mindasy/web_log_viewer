@@ -33,23 +33,23 @@ with open('$file') as f:
 "
 }
 
-# 保存原始 APP_VERSION 和 APP_BUILD_TIME，打包后恢复
+# 保存原始 APP_VERSION 和 APP_RELEASE_TIME，打包后恢复
 ORIG_VERSION=$(_read_const "APP_VERSION" "$UTILS_FILE")
-ORIG_BUILD_TIME=$(_read_const "APP_BUILD_TIME" "$UTILS_FILE")
+ORIG_RELEASE_TIME=$(_read_const "APP_RELEASE_TIME" "$UTILS_FILE")
 
 # 确保在任何退出路径上都恢复
 cleanup() {
     _replace_const "APP_VERSION" "$ORIG_VERSION" "$UTILS_FILE"
-    _replace_const "APP_BUILD_TIME" "$ORIG_BUILD_TIME" "$UTILS_FILE"
+    _replace_const "APP_RELEASE_TIME" "$ORIG_RELEASE_TIME" "$UTILS_FILE"
     echo "↩️  APP_VERSION 已恢复为: $ORIG_VERSION"
-    echo "↩️  APP_BUILD_TIME 已恢复为: $ORIG_BUILD_TIME"
+    echo "↩️  APP_RELEASE_TIME 已恢复为: $ORIG_RELEASE_TIME"
 }
 trap cleanup EXIT
 
-# 注入构建时间
-BUILD_TIME=$(date "+%Y/%m/%d %H:%M:%S")
-_replace_const "APP_BUILD_TIME" "$BUILD_TIME" "$UTILS_FILE"
-echo "📦 APP_BUILD_TIME 已注入为: $BUILD_TIME"
+# 注入发布构建时间（亚洲/上海时区）
+RELEASE_TIME=$(TZ=Asia/Shanghai date "+%Y/%m/%d %H:%M:%S")
+_replace_const "APP_RELEASE_TIME" "$RELEASE_TIME" "$UTILS_FILE"
+echo "📦 APP_RELEASE_TIME 已注入为: $RELEASE_TIME"
 
 # 用版本号更新 APP_VERSION
 "$ROOT_DIR/scripts/set-version.sh" ${VERSION:+"$VERSION"}
