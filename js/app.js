@@ -166,7 +166,7 @@ const App = {
       LogFilter.state.searchText = val;
       LogFilter.resetSearch();
       this.refresh();
-    }, LogParser.entries.length > 50000 ? 400 : 200));
+    }, LogParser.entries.length > 50000 ? 600 : 200));
 
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -916,7 +916,7 @@ const App = {
     document.getElementById('regex-test-section').style.display = 'block';
 
     // 从已加载的日志中采样测试
-    const samples = LogParser.rawLines.filter(l => l.trim()).slice(0, 10);
+    const samples = LogParser.entries.slice(0, 10).map(e => e.raw).filter(l => l && l.trim());
     if (samples.length === 0) {
       // 使用样本行本身
       const sampleLine = document.getElementById('smart-sample').value.trim();

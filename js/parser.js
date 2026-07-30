@@ -60,7 +60,6 @@ const LogParser = {
 
   // 解析结果
   entries: [],
-  rawLines: [],
   fileInfo: null,
   // 多文件来源信息
   sourceFiles: [],
@@ -71,7 +70,6 @@ const LogParser = {
     this.config = cfg;
     this._detectedPreset = null;
     this.entries = [];
-    this.rawLines = [];
     this.sourceFiles = [];
 
     // 检测是否为压缩包（zip / tar / tar.gz / tgz / rar）
@@ -88,7 +86,6 @@ const LogParser = {
 
     const text = await this.readFile(file, cfg.encoding);
     const lines = text.split(/\r?\n/);
-    this.rawLines = lines;
 
     // 自动检测格式
     let preset = cfg.preset;
@@ -121,23 +118,24 @@ const LogParser = {
     const oldEntries = this.entries;
     this.entries = [];
 
-    const lines = this.rawLines || [];
+    // 从旧 entries 采样自动检测格式
+    const sampleLines = oldEntries.slice(0, 50).map(e => e.raw);
     let preset = cfg.preset;
     if (preset === 'auto') {
-      preset = this.autoDetect(lines);
+      preset = this.autoDetect(sampleLines);
     }
 
     const parser = this.getParser(preset, cfg);
     const sourceFileName = (this.sourceFiles && this.sourceFiles.length > 0)
       ? this.sourceFiles[0].name : 'reparse';
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    for (const oldEntry of oldEntries) {
+      const line = oldEntry.raw;
       if (!line) continue;
-      const entry = parser(line, i);
+      const entry = parser(line, oldEntry.lineNumber);
       if (entry) {
         entry.index = this.entries.length;
-        entry.lineNumber = i;
+        entry.lineNumber = oldEntry.lineNumber;
         entry.sourceFile = sourceFileName;
         this.entries.push(entry);
       }
@@ -199,7 +197,6 @@ const LogParser = {
     }
 
     if (showProgress) Utils.hideLoading();
-    this.rawLines = allLines;
 
     let preset = cfg.preset;
     if (preset === 'auto') {
@@ -578,15 +575,12 @@ const LogParser = {
 
     // 追加模式：先保存已有数据
     const savedEntries = append ? [...this.entries] : [];
-    const savedRaw = append ? [...this.rawLines] : [];
     const savedSrc = append ? [...this.sourceFiles] : [];
 
     this.entries = [];
-    this.rawLines = [];
     this.sourceFiles = [];
 
     const allEntries = [];
-    const allRawLines = [];
     const allSourceFiles = [];
     const failedFiles = [];
 
@@ -594,13 +588,11 @@ const LogParser = {
       try {
         // 检测是否为压缩包
         if (ArchiveHandler.isArchive(file.name)) {
-          const savedEntries = this.entries;
-          const savedRaw = this.rawLines;
-          const savedSrc = this.sourceFiles;
+          const savedEntriesInner = this.entries;
+          const savedSrcInner = this.sourceFiles;
           const savedInfo = this.fileInfo;
 
           this.entries = [];
-          this.rawLines = [];
           this.sourceFiles = [];
 
           try {
@@ -610,12 +602,10 @@ const LogParser = {
               if (!e.sourceFile) e.sourceFile = file.name;
             });
             for (let ei = 0; ei < this.entries.length; ei++) allEntries.push(this.entries[ei]);
-            for (let ri = 0; ri < this.rawLines.length; ri++) allRawLines.push(this.rawLines[ri]);
             for (let si = 0; si < this.sourceFiles.length; si++) allSourceFiles.push(this.sourceFiles[si]);
           } finally {
-            this.entries = savedEntries;
-            this.rawLines = savedRaw;
-            this.sourceFiles = savedSrc;
+            this.entries = savedEntriesInner;
+            this.sourceFiles = savedSrcInner;
             this.fileInfo = savedInfo;
           }
         } else {
@@ -640,7 +630,6 @@ const LogParser = {
               allEntries.push(entry);
             }
           }
-          for (let li = 0; li < lines.length; li++) allRawLines.push(lines[li]);
           allSourceFiles.push({ name: file.name, size: file.size });
         }
       } catch (e) {
@@ -667,11 +656,6 @@ const LogParser = {
       allEntries.length = 0;
       for (let i = 0; i < tempEntries.length; i++) allEntries.push(tempEntries[i]);
 
-      const tempRaw = [];
-      for (let i = 0; i < savedRaw.length; i++) tempRaw.push(savedRaw[i]);
-      for (let i = 0; i < allRawLines.length; i++) tempRaw.push(allRawLines[i]);
-      allRawLines.length = 0;
-      for (let i = 0; i < tempRaw.length; i++) allRawLines.push(tempRaw[i]);
       for (const sf of savedSrc) {
         const exists = allSourceFiles.find(f => f.name === sf.name);
         if (!exists) allSourceFiles.push(sf);
@@ -690,7 +674,6 @@ const LogParser = {
     allEntries.forEach((e, i) => (e.index = i));
 
     this.entries = allEntries;
-    this.rawLines = allRawLines;
     this.sourceFiles = allSourceFiles;
     this.fileInfo = {
       name: `${files.length} 个文件合并`,
@@ -706,7 +689,6 @@ const LogParser = {
   // 清除
   clear() {
     this.entries = [];
-    this.rawLines = [];
     this.fileInfo = null;
     this.sourceFiles = [];
     this.config = {
