@@ -20,6 +20,7 @@ const LogFilter = {
     },
     levels: { FATAL: true, ERROR: true, WARN: true, INFO: true, DEBUG: true, TRACE: true },
     threadFilter: '',
+    pidFilter: '',
     sourceFilter: '',
     messageFilter: '',
     timeFrom: null,
@@ -52,10 +53,18 @@ const LogFilter = {
     const result = [];
     if (hasSearch) this.searchMatches = [];
 
+    // PID 过滤（支持逗号分隔多个 PID）
+    let pidSet = null;
+    if (st.pidFilter) {
+      pidSet = new Set(st.pidFilter.split(',').map(s => s.trim()).filter(Boolean));
+    }
+
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
 
       if (st.levels[e.level] === false) continue;
+
+      if (pidSet && pidSet.size > 0 && !pidSet.has(e.pid)) continue;
 
       if (hasSearch) {
         const text = this.getSearchableText(e);

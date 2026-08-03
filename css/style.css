@@ -1086,7 +1086,7 @@ html, body {
   overflow: hidden;
   animation: fadeInPanel 0.2s ease;
 }
-.popup-panel.large-popup { width: 800px; max-height: 80vh; }
+.popup-panel.large-popup { width: 95vw; max-width: 1600px; height: 92vh; }
 .popup-overlay {
   position: fixed;
   inset: 0;
@@ -1272,6 +1272,92 @@ html, body {
   pointer-events: none;
   z-index: 1001;
   box-shadow: var(--shadow);
+}
+
+/* Timeline mode tabs */
+.timeline-mode-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.timeline-mode-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.timeline-mode-btn:not(:last-child) {
+  border-right: 1px solid var(--border-color);
+}
+.timeline-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.timeline-pid-select {
+  padding: 2px 6px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  outline: none;
+  max-width: 120px;
+}
+#timeline-thread-search {
+  width: 120px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+#timeline-thread-search::placeholder {
+  color: var(--text-muted);
+}
+
+/* ===== 视图面包屑 ===== */
+.view-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: nowrap;
+  min-height: 26px;
+}
+.vb-crumb {
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+  user-select: none;
+}
+.vb-crumb:hover { background: var(--bg-hover); }
+.vb-crumb.active {
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: default;
+}
+.vb-sep {
+  color: var(--text-muted);
+  user-select: none;
+}
+
+#btn-save-view {
+  font-size: 11px;
+  padding: 2px 6px;
 }
 
 /* Parser config */

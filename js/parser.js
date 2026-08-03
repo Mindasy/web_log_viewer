@@ -64,6 +64,29 @@ const LogParser = {
   // 多文件来源信息
   sourceFiles: [],
 
+  // PID/TID 智能提取模式（按优先级）
+  PID_TID_PATTERNS: [
+    { regex: /\[(\d{4,7})\]/, field: 'pid' },
+    { regex: /\b[Pp][Ii][Dd][=:]\s*(\d+)/, field: 'pid' },
+    { regex: /\bprocess(?:Id)?[=:]\s*(\d+)/i, field: 'pid' },
+    { regex: /\[[Tt][Ii][Dd][=:]\s*(\d+)\]/, field: 'tid' },
+    { regex: /\b[Tt][Ii][Dd][=:]\s*(\d+)/, field: 'tid' },
+    { regex: /\bthreadId[=:]\s*(\d+)/i, field: 'tid' },
+  ],
+
+  // 从原始行中智能提取 PID/TID
+  _extractPidTid(line) {
+    const result = { pid: '', tid: '' };
+    for (const pattern of this.PID_TID_PATTERNS) {
+      const match = line.match(pattern.regex);
+      if (match && !result[pattern.field]) {
+        result[pattern.field] = match[1];
+      }
+      if (result.pid && result.tid) break;
+    }
+    return result;
+  },
+
   // 解析文件（支持压缩包自动解压）
   async parseFile(file, config = {}) {
     const cfg = { ...this.config, ...config };
@@ -338,6 +361,12 @@ const LogParser = {
         entry.level = Utils.detectLevel(line) || '';
       }
 
+      // 智能提取 PID/TID（补充未捕获的字段）
+      const extracted = this._extractPidTid(line);
+      if (!entry.pid) entry.pid = extracted.pid;
+      if (!entry.tid) entry.tid = extracted.tid;
+      if (!entry.thread && extracted.tid) entry.thread = extracted.tid;
+
       return entry;
     };
   },
@@ -374,6 +403,12 @@ const LogParser = {
     if (threadMatch && threadMatch[1].length < 50) {
       entry.thread = threadMatch[1];
     }
+
+    // 智能提取 PID/TID
+    const extracted = this._extractPidTid(line);
+    if (!entry.pid) entry.pid = extracted.pid;
+    if (!entry.tid) entry.tid = extracted.tid;
+    if (!entry.thread && extracted.tid) entry.thread = extracted.tid;
 
     return entry;
   },
@@ -421,6 +456,11 @@ const LogParser = {
       if (!entry.level) {
         entry.level = Utils.detectLevel(entry.message) || '';
       }
+      // 智能提取 PID/TID（从 raw 中补充）
+      const extracted = this._extractPidTid(line);
+      if (!entry.pid) entry.pid = extracted.pid;
+      if (!entry.tid) entry.tid = extracted.tid;
+      if (!entry.thread && extracted.tid) entry.thread = extracted.tid;
       return entry;
     } catch {
       return this.genericParse(line, lineNum);

@@ -23,6 +23,12 @@ const App = {
   async init() {
     LogGrid.init();
     Timeline.init();
+    ThreadTimeline.init();
+    // 窗口大小变化时重绘时间线
+    window.addEventListener('resize', Utils.debounce(() => {
+      ThreadTimeline.resize();
+      Timeline.resize();
+    }, 150));
     // 首次启动：将内置预设 Pattern 写入 DB
     await this.seedPresetPatterns();
     this.bindToolbar();
@@ -227,7 +233,13 @@ const App = {
       panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
     });
 
+    // 保存视图
+    document.getElementById('btn-save-view').addEventListener('click', () => {
+      this.saveCurrentSearchAsView();
+    });
+
     const advancedInputs = [
+      { id: 'filter-pid', key: 'pidFilter' },
       { id: 'filter-thread', key: 'threadFilter' },
       { id: 'filter-source', key: 'sourceFilter' },
       { id: 'filter-message', key: 'messageFilter' },
@@ -1093,6 +1105,7 @@ const App = {
     LogFilter.state.sortColumn = null;
     LogFilter.state.sortDirection = 'asc';
     document.getElementById('grid-header').querySelectorAll('.col').forEach(c => c.classList.remove('sorted'));
+    ViewManager.clear();
     this.refresh();
     this.updateFileInfo();
     this.updateButtonStates();
@@ -1285,12 +1298,20 @@ const App = {
     if (panel.style.display === 'none') {
       panel.style.display = 'flex';
       Utils.showOverlay();
+      // 填充 PID 下拉
+      ThreadTimeline._populatePidSelect();
       // 延迟设置canvas尺寸
       setTimeout(() => {
         const canvas = document.getElementById('timeline-canvas');
         canvas.width = canvas.clientWidth;
         canvas.height = canvas.clientHeight;
-        Timeline.show(LogParser.entries);
+        // 默认显示线程模式
+        const activeMode = document.querySelector('.timeline-mode-btn.active');
+        if (activeMode && activeMode.dataset.mode === 'thread') {
+          ThreadTimeline._refreshFromPidSelect();
+        } else {
+          Timeline.show(LogParser.entries);
+        }
       }, 50);
     } else {
       panel.style.display = 'none';
@@ -1740,7 +1761,7 @@ const App = {
     const searchIds = ['search-input', 'btn-search', 'btn-regex', 'btn-case-sensitive',
                        'btn-whole-word', 'btn-highlight', 'goto-line-input', 'btn-goto-line',
                        'btn-scroll-top', 'btn-scroll-bottom',
-                       'filter-thread', 'filter-source', 'filter-message',
+                       'filter-pid', 'filter-thread', 'filter-source', 'filter-message',
                        'filter-time-from', 'filter-time-to', 'btn-advanced-filter'];
     for (const id of searchIds) {
       const el = document.getElementById(id);
@@ -2065,8 +2086,60 @@ const App = {
 
   // ===== 刷新 =====
   refresh() {
-    LogGrid.refresh();
+    if (ViewManager.isInView()) {
+      // 视图模式：在视图数据上过滤
+      const viewEntries = ViewManager.getCurrentEntries();
+      const filtered = LogFilter.apply(viewEntries);
+      LogGrid.setData(filtered);
+    } else {
+      LogGrid.refresh();
+    }
     this.updateSearchStats();
+    this._updateSaveViewButton();
+  },
+
+  // 供 ViewManager 调用：直接设置视图数据
+  setViewData(entries) {
+    LogGrid.setData(entries);
+    this.updateSearchStats();
+    this._updateSaveViewButton();
+  },
+
+  // 保存当前搜索结果为视图
+  saveCurrentSearchAsView() {
+    const filtered = LogGrid.entries;
+    if (filtered.length === 0) {
+      Utils.showToast('没有搜索结果，无法创建视图', 'warn');
+      return;
+    }
+    const totalEntries = ViewManager.isInView() ? ViewManager.getCurrentEntries().length : LogParser.entries.length;
+    if (filtered.length === totalEntries && !LogFilter.state.searchText && !LogFilter.state.pidFilter) {
+      Utils.showToast('当前无过滤条件，无法创建视图', 'warn');
+      return;
+    }
+    let name = '';
+    if (LogFilter.state.pidFilter) name = `PID:${LogFilter.state.pidFilter}`;
+    if (LogFilter.state.searchText) {
+      name = name ? `${name} + ` : '';
+      const searchPreview = LogFilter.state.searchText.length > 20
+        ? LogFilter.state.searchText.slice(0, 20) + '…'
+        : LogFilter.state.searchText;
+      name += `"${searchPreview}"`;
+    }
+    if (!name) name = `过滤结果 (${filtered.length} 条)`;
+    ViewManager.pushView(name, filtered, { ...LogFilter.state });
+    Utils.showToast(`已创建视图: ${name}`, 'success');
+  },
+
+  // 更新保存视图按钮的可见性
+  _updateSaveViewButton() {
+    const btn = document.getElementById('btn-save-view');
+    if (!btn) return;
+    const hasData = LogParser.entries.length > 0;
+    const totalEntries = ViewManager.isInView() ? ViewManager.getCurrentEntries().length : LogParser.entries.length;
+    const hasFilter = LogFilter.state.searchText || LogFilter.state.pidFilter
+      || LogGrid.entries.length < totalEntries;
+    btn.style.display = (hasData && hasFilter) ? 'inline-flex' : 'none';
   },
 
   escapeHtml(str) {
