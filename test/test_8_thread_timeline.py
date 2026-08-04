@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 
 from test_runner import ROOT, TestSuite
 
@@ -166,6 +167,24 @@ def _(t, flags):
     else:
         t.fail("缺少 timeline-thread-search 输入框")
 
+    # 线程详情：返回按钮
+    if 'id="btn-timeline-back"' in html:
+        t.ok("btn-timeline-back 返回按钮存在")
+    else:
+        t.fail("缺少 btn-timeline-back 返回按钮")
+
+    # 线程详情：详情标签
+    if 'id="timeline-detail-label"' in html:
+        t.ok("timeline-detail-label 详情标签存在")
+    else:
+        t.fail("缺少 timeline-detail-label 详情标签")
+
+    # 线程详情：方法搜索
+    if 'id="timeline-method-search"' in html:
+        t.ok("timeline-method-search 方法搜索框存在")
+    else:
+        t.fail("缺少 timeline-method-search 方法搜索框")
+
 
 # ===== JS 文件完整性 =====
 
@@ -224,7 +243,7 @@ def _(t, flags):
         ('_drawNow', '实际绘制'),
         ('_drawSummary', '摘要栏绘制'),
         ('_drawGrid', '网格绘制'),
-        ('_drawSwimlane', '泳道绘制'),
+        ('_drawItem', '统一泳道绘制'),
         ('_drawDensity', '密度模式绘制'),
         ('_drawTimeAxis', '时间轴绘制'),
         ('_findEntryAt', '点击检测'),
@@ -236,6 +255,18 @@ def _(t, flags):
         ('_populatePidSelect', 'PID 下拉填充'),
         ('_collectPids', 'PID 收集'),
         ('resize', '尺寸调整'),
+        ('openThreadDetail', '打开线程详情'),
+        ('closeThreadDetail', '关闭线程详情'),
+        ('_extractMethod', '方法名称提取'),
+        ('_groupByMethod', '方法分组'),
+        ('_filterDetailMethods', '方法过滤'),
+        ('_drawScrollbar', '滚动条绘制'),
+        ('_clampScrollY', '垂直滚动边界'),
+        ('_getContentHeight', '内容高度计算'),
+        ('_getViewportH', '视口高度计算'),
+        ('scrollY', '垂直滚动偏移'),
+        ('_detailThread', '详情线程状态'),
+        ('_detailMethods', '详情方法列表'),
     ]
 
     for method_name, desc in required:
@@ -323,6 +354,9 @@ def _(t, flags):
         ('.timeline-pid-select', 'PID 选择器'),
         ('#timeline-thread-search', '线程搜索框'),
         ('#btn-save-view', '保存视图按钮'),
+        ('#btn-timeline-back', '返回按钮'),
+        ('#timeline-detail-label', '详情标签'),
+        ('#timeline-method-search', '方法搜索框'),
     ]
 
     for selector, desc in selectors:
@@ -470,6 +504,230 @@ def _(t, flags):
     else:
         t.fail("缺少命中半径自适应缩放")
 
+    # 垂直滚动
+    if 'scrollY' in js and '_clampScrollY' in js:
+        t.ok("垂直滚动支持")
+    else:
+        t.fail("缺少垂直滚动")
+
+    # 视口裁剪
+    if 'firstVisible' in js and 'lastVisible' in js:
+        t.ok("视口裁剪 (firstVisible/lastVisible)")
+    else:
+        t.fail("缺少视口裁剪")
+
+    # 滚动条绘制
+    if '_drawScrollbar' in js:
+        t.ok("滚动条绘制")
+    else:
+        t.fail("缺少滚动条绘制")
+
+
+@suite.test("线程详情方法时间线功能")
+def _(t, flags):
+    """验证线程详情（方法时间线）的关键功能"""
+    js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(js_path, encoding='utf-8').read()
+
+    # 方法名称提取
+    if '_extractMethod' in js:
+        t.ok("_extractMethod 方法存在")
+    else:
+        t.fail("缺少 _extractMethod")
+
+    if "entry.source" in js:
+        t.ok("_extractMethod 从 entry.source 提取方法")
+    else:
+        t.fail("_extractMethod 未使用 entry.source")
+
+    if "split('.')" in js:
+        t.ok("_extractMethod 使用点号分割")
+    else:
+        t.fail("_extractMethod 未使用点号分割")
+
+    if "slice(-2)" in js:
+        t.ok("_extractMethod 取最后两段作为方法标识")
+    else:
+        t.fail("_extractMethod 未取最后两段")
+
+    if "'(unknown)'" in js:
+        t.ok("空 source 返回 '(unknown)'")
+    else:
+        t.fail("缺少空 source 处理")
+
+    # file:func:linenum 格式支持
+    if "includes(':')" in js:
+        t.ok("_extractMethod 支持 file:func:linenum 格式")
+    else:
+        t.fail("_extractMethod 缺少冒号格式支持")
+
+    if "split(':')" in js:
+        t.ok("_extractMethod 使用冒号分割")
+    else:
+        t.fail("_extractMethod 未使用冒号分割")
+
+    if "funcPart" in js:
+        t.ok("_extractMethod 提取 funcPart")
+    else:
+        t.fail("_extractMethod 缺少 funcPart 提取")
+
+    if "className" in js:
+        t.ok("_extractMethod 提取 className")
+    else:
+        t.fail("_extractMethod 缺少 className 提取")
+
+    # 方法分组
+    if '_groupByMethod' in js:
+        t.ok("_groupByMethod 方法存在")
+    else:
+        t.fail("缺少 _groupByMethod")
+
+    # 方法过滤
+    if '_filterDetailMethods' in js:
+        t.ok("_filterDetailMethods 方法存在")
+    else:
+        t.fail("缺少 _filterDetailMethods")
+
+    # 详情模式提示
+    if '没有匹配的方法' in js:
+        t.ok("方法为空提示: 没有匹配的方法")
+    else:
+        t.fail("缺少方法为空提示")
+
+    # 详情模式 Summary
+    if '方法' in js and '线程:' in js:
+        t.ok("详情模式摘要包含方法和线程信息")
+    else:
+        t.fail("详情模式摘要不完整")
+
+    # 详情 header 更新
+    if '_updateDetailHeader' in js:
+        t.ok("_updateDetailHeader 方法存在")
+    else:
+        t.fail("缺少 _updateDetailHeader")
+
+    # 双击/Alt+点击打开详情
+    if 'dblclick' in js and 'openThreadDetail' in js:
+        t.ok("双击打开线程详情")
+    else:
+        t.fail("缺少双击打开线程详情")
+
+    if 'e.altKey' in js:
+        t.ok("Alt+点击打开线程详情")
+    else:
+        t.fail("缺少 Alt+点击打开线程详情")
+
+    # 详情模式下点击方法标签过滤
+    if 'sourceFilter' in js:
+        t.ok("点击方法标签设置 sourceFilter")
+    else:
+        t.fail("缺少 sourceFilter 过滤")
+
+    # closeThreadDetail 清除过滤条件
+    if "LogFilter.state.threadFilter = ''" in js and "LogFilter.state.sourceFilter = ''" in js:
+        t.ok("closeThreadDetail 清除 threadFilter 和 sourceFilter")
+    else:
+        t.fail("closeThreadDetail 未清除过滤条件")
+
+    if 'App.refresh()' in js:
+        t.ok("closeThreadDetail 调用 App.refresh() 恢复 grid 数据")
+    else:
+        t.fail("closeThreadDetail 未调用 App.refresh()")
+
+    # openThreadDetail 清除 sourceFilter
+    if "LogFilter.state.sourceFilter = ''" in js:
+        t.ok("openThreadDetail 清除 sourceFilter")
+    else:
+        t.fail("openThreadDetail 未清除 sourceFilter")
+
+
+@suite.test("_extractMethod 方法提取逻辑验证")
+def _(t, flags):
+    """验证 _extractMethod 对各种 source 格式的提取结果"""
+
+    js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(js_path, encoding='utf-8').read()
+
+    # 提取 _extractMethod 函数体
+    func_start = js.find('_extractMethod(entry)')
+    if func_start < 0:
+        t.fail("无法定位 _extractMethod 函数")
+        return
+    # 找到函数体开始的大括号
+    brace_start = js.find('{', func_start)
+    if brace_start < 0:
+        t.fail("无法定位 _extractMethod 函数体开始")
+        return
+    # 从 brace_start 开始，手动匹配大括号
+    depth = 0
+    func_end = brace_start
+    for i in range(brace_start, len(js)):
+        if js[i] == '{':
+            depth += 1
+        elif js[i] == '}':
+            depth -= 1
+            if depth == 0:
+                func_end = i + 1
+                break
+    func_body = js[brace_start + 1:func_end - 1].strip()
+
+    # 用 Node.js 执行测试
+    test_code = """
+function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const _extractMethod = function(entry) {
+%s
+};
+const cases = [
+  // [source, expected]
+  ['', '(unknown)'],
+  ['com.example.Service.methodName', 'Service.methodName'],
+  ['com.example.Service:handle:42', 'Service.handle'],
+  ['com.example.web.UserController:login:128', 'UserController.login'],
+  ['com.example.scheduler.TaskRunner:run:55', 'TaskRunner.run'],
+  ['com.example.Service:process', 'Service.process'],
+  ['com.example.Service', 'Service'],
+  ['SimpleClass', 'SimpleClass'],
+  ['com.a.b.c.d.DeepClass.deepMethod', 'DeepClass.deepMethod'],
+  ['com.a.b.c.d.DeepClass:deepMethod:99', 'DeepClass.deepMethod'],
+  ['com.example.Service:methodName', 'Service.methodName'],
+  ['com.example.Service:handle', 'Service.handle'],
+];
+let pass = 0, fail = 0;
+for (const [src, expected] of cases) {
+  const entry = { source: src };
+  const result = _extractMethod(entry);
+  if (result === expected) {
+    pass++;
+  } else {
+    fail++;
+    console.log('FAIL: source="' + src + '" expected="' + expected + '" got="' + result + '"');
+  }
+}
+console.log('PASS:' + pass + ' FAIL:' + fail);
+"""
+    test_code = test_code % func_body
+
+    proc = subprocess.run(
+        ['node', '-e', test_code],
+        capture_output=True, text=True, timeout=10
+    )
+
+    if proc.returncode != 0:
+        t.fail(f"Node.js 执行失败: {proc.stderr}")
+        return
+
+    output = proc.stdout.strip()
+    if 'FAIL:0' in output:
+        # 提取通过数
+        pass_match = re.search(r'PASS:(\d+)', output)
+        if pass_match:
+            t.ok(f"_extractMethod 测试通过 ({pass_match.group(1)} 个用例)")
+    else:
+        for line in output.split('\n'):
+            if line.startswith('FAIL:'):
+                t.fail(line)
+        t.fail("_extractMethod 部分测试失败")
+
 
 @suite.test("线程时间线性能优化特征")
 def _(t, flags):
@@ -506,6 +764,22 @@ def _(t, flags):
     else:
         t.fail("缺少批量路径绘制")
 
+    # 段块模式绘制
+    if 'barH' in js and 'barY' in js:
+        t.ok("段块模式绘制（barH/barY）")
+    else:
+        t.fail("缺少段块模式绘制")
+
+    if "fillRect" in js:
+        t.ok("段块模式使用 fillRect")
+    else:
+        t.fail("段块模式缺少 fillRect")
+
+    if "globalAlpha" in js:
+        t.ok("ERROR/FATAL 段块发光效果")
+    else:
+        t.fail("缺少 ERROR/FATAL 发光效果")
+
     # 二分查找
     if 'lo = 0' in js or 'lo <= hi' in js:
         t.ok("hover 检测使用二分查找")
@@ -518,8 +792,8 @@ def _(t, flags):
     else:
         t.fail("缺少密度模式绘制")
 
-    # 视口裁剪
-    if 'px < labelEnd' in js:
+    # 视口裁剪（段块模式）
+    if 'Math.max(x1, labelEnd)' in js or 'Math.min(x2, plotX2)' in js:
         t.ok("视口裁剪")
     else:
         t.fail("缺少视口裁剪")

@@ -1,4 +1,4 @@
-// thread_timeline.js - 线程时间线可视化（泳道图）
+// thread_timeline.js - 线程时间线可视化（泳道图 + 方法时间线）
 
 const ThreadTimeline = {
   canvas: null, ctx: null, tooltip: null,
@@ -8,11 +8,18 @@ const ThreadTimeline = {
   threads: [], _threadNames: [], _visibleThreads: [],
   _hoveredThreadIdx: -1,
 
-  zoomLevel: 1, offsetX: 0,
+  zoomLevel: 1, offsetX: 0, scrollY: 0,
   minTime: 0, maxTime: 0, timeRange: 1,
 
-  dragging: false, dragStartX: 0, dragStartOffset: 0,
+  dragging: false, dragStartX: 0, dragStartY: 0,
+  dragStartOffset: 0, dragStartScrollY: 0,
   hoveredEntry: null,
+
+  // 线程详情模式
+  _detailThread: null,         // 当前查看详情的线程名
+  _detailMethods: [],          // [{ name, entries, color }]
+  _detailVisibleMethods: [],
+  _detailMethodSearch: '',
 
   MARGIN: { top: 40, bottom: 38, left: 0, right: 10 },
   LABEL_WIDTH: 160,
@@ -44,6 +51,8 @@ const ThreadTimeline = {
 
   show(pid, entries) {
     this.pid = pid;
+    this._detailThread = null;
+    this._detailMethods = [];
     this.entries = entries.filter(e => e.date);
     this._refreshDpr();
 
@@ -66,7 +75,6 @@ const ThreadTimeline = {
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(e);
     }
-    // 线程内按时间排序
     for (const arr of map.values()) {
       arr.sort((a, b) => a.date.getTime() - b.date.getTime());
     }
@@ -126,7 +134,123 @@ const ThreadTimeline = {
       this._visibleThreads = this._threadNames.filter(n => re.test(n));
     }
     this._hoveredThreadIdx = -1;
+    this._clampScrollY();
     this._draw();
+  },
+
+  // ===== 线程详情（方法时间线） =====
+
+  openThreadDetail(threadName) {
+    const thread = this.threads.find(t => t.name === threadName);
+    if (!thread) return;
+    this._detailThread = threadName;
+    this._detailMethodSearch = '';
+    // 清除之前的过滤条件，进入全新上下文
+    LogFilter.state.sourceFilter = '';
+    this._groupByMethod(thread.entries);
+    this._clampScrollY();
+    this._updateDetailHeader();
+    this._draw();
+  },
+
+  closeThreadDetail() {
+    this._detailThread = null;
+    this._detailMethods = [];
+    this._detailVisibleMethods = [];
+    this.scrollY = 0;
+    // 清除时间线触发的过滤条件，恢复 grid 显示全部数据
+    LogFilter.state.threadFilter = '';
+    LogFilter.state.sourceFilter = '';
+    this._updateDetailHeader();
+    this._draw();
+    App.refresh();
+  },
+
+  _groupByMethod(entries) {
+    const map = new Map();
+    for (const e of entries) {
+      const method = this._extractMethod(e);
+      if (!map.has(method)) map.set(method, []);
+      map.get(method).push(e);
+    }
+    const names = [...map.keys()].sort((a, b) => {
+      if (a === '(unknown)') return 1;
+      if (b === '(unknown)') return -1;
+      return a.localeCompare(b);
+    });
+    this._detailMethods = names.map((name, i) => ({
+      name,
+      entries: map.get(name),
+      color: this.PALETTE[i % this.PALETTE.length],
+      _positions: null,
+      _levels: null,
+    }));
+    // 预计算位置
+    const plotW = this._getPlotWidth();
+    if (plotW <= 0) return;
+    const levelMap = { FATAL:0, ERROR:1, WARN:2, INFO:3, DEBUG:4, TRACE:5 };
+    for (const m of this._detailMethods) {
+      const count = m.entries.length;
+      const positions = new Float64Array(count);
+      const levels = new Uint8Array(count);
+      for (let j = 0; j < count; j++) {
+        const e = m.entries[j];
+        const t = (e.date.getTime() - this.minTime) / this.timeRange;
+        positions[j] = this.MARGIN.left + this.LABEL_WIDTH + t * plotW;
+        levels[j] = levelMap[e.level] ?? 6;
+      }
+      m._positions = positions;
+      m._levels = levels;
+    }
+    this._detailVisibleMethods = [...names];
+  },
+
+  _filterDetailMethods(searchText) {
+    this._detailMethodSearch = searchText;
+    if (!searchText) {
+      this._detailVisibleMethods = this._detailMethods.map(m => m.name);
+    } else {
+      const re = new RegExp(Utils.escapeRegex(searchText), 'i');
+      this._detailVisibleMethods = this._detailMethods
+        .filter(m => re.test(m.name)).map(m => m.name);
+    }
+    this._clampScrollY();
+    this._draw();
+  },
+
+  _extractMethod(entry) {
+    const src = entry.source || '';
+    if (!src) return '(unknown)';
+    // file:func:linenum 格式，如 "com.example.Service:handle:42"
+    if (src.includes(':')) {
+      const parts = src.split(':');
+      const filePart = parts[0] || '';
+      const funcPart = parts[1] || '';
+      const dotParts = filePart.split('.');
+      const className = dotParts.length >= 2 ? dotParts.slice(-1)[0] : filePart;
+      if (funcPart) return className + '.' + funcPart;
+      return className;
+    }
+    // 点号格式，如 "com.example.Service.methodName"
+    const parts = src.split('.');
+    if (parts.length >= 4) {
+      // 4段以上：取最后两段作为 "类名.方法名"
+      return parts.slice(-2).join('.');
+    }
+    // 3段以下：取最后一段（类名或简单名称）
+    return parts[parts.length - 1];
+  },
+
+  _updateDetailHeader() {
+    const backBtn = document.getElementById('btn-timeline-back');
+    const detailLabel = document.getElementById('timeline-detail-label');
+    const methodSearch = document.getElementById('timeline-method-search');
+    if (backBtn) backBtn.style.display = this._detailThread ? 'inline-flex' : 'none';
+    if (detailLabel) {
+      detailLabel.style.display = this._detailThread ? 'inline' : 'none';
+      detailLabel.textContent = this._detailThread ? `线程: ${this._detailThread}` : '';
+    }
+    if (methodSearch) methodSearch.style.display = this._detailThread ? 'inline-block' : 'none';
   },
 
   // ===== 缩放/平移 =====
@@ -134,6 +258,7 @@ const ThreadTimeline = {
   fitToData() {
     this.zoomLevel = 1;
     this.offsetX = 0;
+    this.scrollY = 0;
     this._draw();
   },
 
@@ -151,6 +276,24 @@ const ThreadTimeline = {
     this._draw();
   },
 
+  // ===== 垂直滚动 =====
+
+  _getContentHeight() {
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    return list.length * this.SWIMLANE_H;
+  },
+
+  _getViewportH() {
+    const ch = this.canvas.height / this._dpr;
+    return ch - this.MARGIN.top - this.MARGIN.bottom;
+  },
+
+  _clampScrollY() {
+    const contentH = this._getContentHeight();
+    const viewH = this._getViewportH();
+    this.scrollY = Math.max(0, Math.min(this.scrollY, Math.max(0, contentH - viewH)));
+  },
+
   // ===== Canvas 事件 =====
 
   _bindCanvasEvents() {
@@ -165,8 +308,27 @@ const ThreadTimeline = {
     });
     this.canvas.addEventListener('wheel', e => {
       e.preventDefault();
-      const mx = e.clientX - this.canvas.getBoundingClientRect().left;
-      e.deltaY < 0 ? this.zoomIn(mx) : this.zoomOut(mx);
+      const rect = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const contentH = this._getContentHeight();
+      const viewH = this._getViewportH();
+      const canScrollV = contentH > viewH;
+
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl/Cmd + 滚轮 = 缩放
+        e.deltaY < 0 ? this.zoomIn(mx) : this.zoomOut(mx);
+      } else if (e.shiftKey) {
+        // Shift + 滚轮 = 水平平移
+        this.offsetX -= e.deltaY * 2;
+        this._draw();
+      } else if (canScrollV) {
+        // 垂直滚动
+        this.scrollY = Math.max(0, Math.min(this.scrollY + e.deltaY, contentH - viewH));
+        this._draw();
+      } else {
+        // 无溢出时 = 缩放
+        e.deltaY < 0 ? this.zoomIn(mx) : this.zoomOut(mx);
+      }
     });
     this.canvas.addEventListener('click', e => {
       if (this.hoveredEntry) {
@@ -175,15 +337,50 @@ const ThreadTimeline = {
       }
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
-      const ti = this._getThreadIdx(y);
+
+      if (this._detailThread) {
+        // 详情模式：点击方法标签 → 过滤
+        const mi = this._getItemIdx(y);
+        if (mi >= 0 && x <= this.LABEL_WIDTH) {
+          const name = this._detailVisibleMethods[mi];
+          if (name && name !== '(unknown)') {
+            LogFilter.state.sourceFilter = Utils.escapeRegex(name);
+            App.refresh();
+          }
+        }
+        return;
+      }
+
+      // 线程模式：点击线程标签
+      const ti = this._getItemIdx(y);
       if (ti >= 0 && x <= this.LABEL_WIDTH) {
         const name = this._visibleThreads[ti];
         if (name && name !== 'unknown') {
-          LogFilter.state.threadFilter = Utils.escapeRegex(name);
-          App.refresh();
+          if (e.detail === 2 || e.altKey) {
+            // 双击或 Alt+点击 → 打开线程详情
+            this.openThreadDetail(name);
+          } else {
+            LogFilter.state.threadFilter = Utils.escapeRegex(name);
+            App.refresh();
+          }
         }
       }
     });
+
+    // 双击进入线程详情
+    this.canvas.addEventListener('dblclick', e => {
+      const rect = this.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left, y = e.clientY - rect.top;
+      if (this._detailThread) return;
+      const ti = this._getItemIdx(y);
+      if (ti >= 0 && x > this.LABEL_WIDTH) {
+        const name = this._visibleThreads[ti];
+        if (name && name !== 'unknown') {
+          this.openThreadDetail(name);
+        }
+      }
+    });
+
     document.getElementById('btn-timeline-zoom-in').addEventListener('click',
       () => this.zoomIn(this.canvas.width / this._dpr / 2));
     document.getElementById('btn-timeline-zoom-out').addEventListener('click',
@@ -192,7 +389,13 @@ const ThreadTimeline = {
       () => this.fitToData());
   },
 
-  _onMD(e) { this.dragging = true; this.dragStartX = e.clientX; this.dragStartOffset = this.offsetX; },
+  _onMD(e) {
+    this.dragging = true;
+    this.dragStartX = e.clientX;
+    this.dragStartY = e.clientY;
+    this.dragStartOffset = this.offsetX;
+    this.dragStartScrollY = this.scrollY;
+  },
 
   _onMM(e) {
     const rect = this.canvas.getBoundingClientRect();
@@ -200,11 +403,18 @@ const ThreadTimeline = {
 
     if (this.dragging) {
       this.offsetX = this.dragStartOffset + (e.clientX - this.dragStartX);
+      const contentH = this._getContentHeight();
+      const viewH = this._getViewportH();
+      if (contentH > viewH) {
+        this.scrollY = Math.max(0, Math.min(
+          this.dragStartScrollY - (e.clientY - this.dragStartY),
+          contentH - viewH));
+      }
       this._draw();
       return;
     }
 
-    const ti = this._getThreadIdx(y);
+    const ti = this._getItemIdx(y);
     const prevHovered = this._hoveredThreadIdx;
     this._hoveredThreadIdx = (ti >= 0) ? ti : -1;
 
@@ -217,35 +427,42 @@ const ThreadTimeline = {
       this.tooltip.style.display = 'block';
       this.tooltip.style.left = (e.clientX + 15) + 'px';
       this.tooltip.style.top = (e.clientY - 10) + 'px';
+      const method = this._detailThread ? this._extractMethod(entry) : '';
       this.tooltip.innerHTML =
         `<div style="font-weight:600;color:${lc};font-size:12px">${entry.level||'N/A'}</div>
         <div style="font-size:11px;color:#a6adc8">${esc(entry.thread||entry.tid||'-')}</div>
+        ${method ? `<div style="font-size:11px;color:#89dceb">${esc(method)}</div>` : ''}
         <div style="font-size:11px">${Utils.formatDate(entry.date)}</div>
         <div style="font-size:11px;color:#6c7086">行 #${entry.index+1}</div>
         <div style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${esc(entry.message||entry.raw)}</div>`;
     } else {
+      const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
       this.canvas.style.cursor = ti >= 0 && x <= this.LABEL_WIDTH ? 'pointer' : 'crosshair';
       this.tooltip.style.display = 'none';
     }
 
-    // 只在 hover 线程变化时重绘
     if (prevHovered !== this._hoveredThreadIdx) this._draw();
   },
 
-  _getThreadIdx(y) {
-    const idx = Math.floor((y - this.MARGIN.top) / this.SWIMLANE_H);
-    return (idx >= 0 && idx < this._visibleThreads.length) ? idx : -1;
+  _getItemIdx(y) {
+    const adjustedY = y - this.MARGIN.top + this.scrollY;
+    const idx = Math.floor(adjustedY / this.SWIMLANE_H);
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    return (idx >= 0 && idx < list.length) ? idx : -1;
   },
 
   _findEntryAt(x, y) {
-    const ti = this._getThreadIdx(y);
+    const ti = this._getItemIdx(y);
     if (ti < 0) return null;
-    const thread = this.threads.find(t => t.name === this._visibleThreads[ti]);
-    if (!thread || !thread._positions) return null;
-    const pos = thread._positions;
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    const name = list[ti];
+    const source = this._detailThread
+      ? this._detailMethods.find(m => m.name === name)
+      : this.threads.find(t => t.name === name);
+    if (!source || !source._positions) return null;
+    const pos = source._positions;
     const hr = Math.max(6, 10 / this.zoomLevel);
     const px = (x - this.offsetX) / this.zoomLevel;
-    // 二分查找
     const n = pos.length;
     let lo = 0, hi = n - 1;
     while (lo <= hi) {
@@ -262,7 +479,7 @@ const ThreadTimeline = {
           const d = Math.abs(pos[k] - px);
           if (d < bestDist) { bestDist = d; best = k; }
         }
-        if (bestDist < hr + 4) return thread.entries[best];
+        if (bestDist < hr + 4) return source.entries[best];
         break;
       }
     }
@@ -309,54 +526,71 @@ const ThreadTimeline = {
 
     ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
-
-    // 背景
     ctx.fillStyle = '#11121a'; ctx.fillRect(0, 0, cw, ch);
 
-    if (this._visibleThreads.length === 0) {
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    if (list.length === 0) {
       ctx.fillStyle = '#6c7086'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('没有匹配的线程', cw / 2, ch / 2);
+      ctx.fillText(this._detailThread ? '没有匹配的方法' : '没有匹配的线程', cw / 2, ch / 2);
       ctx.restore(); return;
     }
 
     const plotW = this._getPlotWidth();
     if (plotW <= 0) { ctx.restore(); return; }
-
     if (this._precomputedPlotW !== plotW) this._precomputePositions();
 
     this._drawGrid(ctx, cw, ch, plotW);
     this._drawSummary(ctx, cw, plotW);
 
-    for (let i = 0; i < this._visibleThreads.length; i++) {
-      this._drawSwimlane(ctx, i, cw, plotW);
+    // 视口裁剪：只绘制可见的泳道
+    const viewTop = this.scrollY;
+    const viewBottom = this.scrollY + this._getViewportH();
+    const firstVisible = Math.floor(viewTop / this.SWIMLANE_H);
+    const lastVisible = Math.min(list.length - 1,
+      Math.ceil(viewBottom / this.SWIMLANE_H));
+
+    for (let i = firstVisible; i <= lastVisible; i++) {
+      const y = this.MARGIN.top + i * this.SWIMLANE_H - this.scrollY;
+      if (y + this.SWIMLANE_H < this.MARGIN.top || y > ch - this.MARGIN.bottom) continue;
+      this._drawItem(ctx, i, cw, plotW, y);
     }
+
+    // 垂直滚动条
+    this._drawScrollbar(ctx, cw, ch);
 
     this._drawTimeAxis(ctx, cw, ch, plotW);
     ctx.restore();
   },
 
-  // 摘要栏：显示时间范围、总条目数、线程数
   _drawSummary(ctx, cw, plotW) {
-    const y = 8;
+    const y = 8, labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
     ctx.fillStyle = '#a6adc8'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
-    const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
+
     const rangeMs = this.timeRange;
     let rangeStr;
     if (rangeMs < 1000) rangeStr = rangeMs + 'ms';
     else if (rangeMs < 60000) rangeStr = (rangeMs / 1000).toFixed(1) + 's';
     else if (rangeMs < 3600000) rangeStr = (rangeMs / 60000).toFixed(1) + 'min';
     else rangeStr = (rangeMs / 3600000).toFixed(1) + 'h';
-    const totalEntries = this.threads.reduce((s, t) => s + t.entries.length, 0);
-    ctx.fillText(
-      `${this._threadNames.length} 线程 · ${totalEntries.toLocaleString()} 条日志 · ${rangeStr}`,
-      labelEnd + 8, y + 12);
+
+    if (this._detailThread) {
+      const total = this._detailMethods.reduce((s, m) => s + m.entries.length, 0);
+      ctx.fillText(
+        `${this._detailMethods.length} 方法 · ${total.toLocaleString()} 条日志 · ${rangeStr} · 线程: ${this._detailThread}`,
+        labelEnd + 8, y + 12);
+    } else {
+      const total = this.threads.reduce((s, t) => s + t.entries.length, 0);
+      ctx.fillText(
+        `${this._threadNames.length} 线程 · ${total.toLocaleString()} 条日志 · ${rangeStr}`,
+        labelEnd + 8, y + 12);
+    }
   },
 
   _drawGrid(ctx, cw, ch, plotW) {
     const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
     const plotX2 = cw - this.MARGIN.right;
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
 
-    // 标签区域背景
     ctx.fillStyle = '#161822'; ctx.fillRect(0, 0, labelEnd, ch);
     ctx.strokeStyle = '#252636'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(labelEnd, 0); ctx.lineTo(labelEnd, ch); ctx.stroke();
@@ -372,29 +606,37 @@ const ThreadTimeline = {
       }
     }
 
-    // 交替泳道背景 + 分隔线
-    for (let i = 0; i < this._visibleThreads.length; i++) {
-      const y = this.MARGIN.top + i * this.SWIMLANE_H;
+    // 交替背景 + 分隔线（只绘制可见范围）
+    const viewTop = this.scrollY;
+    const viewBottom = this.scrollY + this._getViewportH();
+    const firstV = Math.floor(viewTop / this.SWIMLANE_H);
+    const lastV = Math.min(list.length - 1, Math.ceil(viewBottom / this.SWIMLANE_H));
+
+    for (let i = firstV; i <= lastV; i++) {
+      const y = this.MARGIN.top + i * this.SWIMLANE_H - this.scrollY;
+      if (y + this.SWIMLANE_H < this.MARGIN.top || y > ch - this.MARGIN.bottom) continue;
       if (i % 2 === 0) {
-        ctx.fillStyle = '#141520'; ctx.fillRect(labelEnd, y, plotX2 - labelEnd, this.SWIMLANE_H);
+        ctx.fillStyle = '#141520';
+        ctx.fillRect(labelEnd, y, plotX2 - labelEnd, this.SWIMLANE_H);
       }
       ctx.strokeStyle = '#1e2030'; ctx.lineWidth = 0.5;
       ctx.beginPath(); ctx.moveTo(labelEnd, y + this.SWIMLANE_H); ctx.lineTo(plotX2, y + this.SWIMLANE_H); ctx.stroke();
     }
   },
 
-  _drawSwimlane(ctx, idx, cw, plotW) {
-    const threadName = this._visibleThreads[idx];
-    const thread = this.threads.find(t => t.name === threadName);
-    if (!thread) return;
+  _drawItem(ctx, idx, cw, plotW, y) {
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    const name = list[idx];
+    const source = this._detailThread
+      ? this._detailMethods.find(m => m.name === name)
+      : this.threads.find(t => t.name === name);
+    if (!source) return;
 
-    const y = this.MARGIN.top + idx * this.SWIMLANE_H;
     const cy = y + this.SWIMLANE_H / 2;
     const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
     const plotX2 = cw - this.MARGIN.right;
     const isHovered = idx === this._hoveredThreadIdx;
 
-    // hover 高亮背景
     if (isHovered) {
       ctx.fillStyle = 'rgba(122,162,247,0.08)';
       ctx.fillRect(labelEnd, y, plotX2 - labelEnd, this.SWIMLANE_H);
@@ -402,59 +644,59 @@ const ThreadTimeline = {
       ctx.fillRect(0, y, labelEnd, this.SWIMLANE_H);
     }
 
-    // 线程标签
-    ctx.fillStyle = isHovered ? '#fff' : thread.color;
-    ctx.font = `bold 11px monospace`;
+    // 标签
+    ctx.fillStyle = isHovered ? '#fff' : source.color;
+    ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'right';
-    const dn = threadName.length > 20 ? threadName.slice(0, 19) + '…' : threadName;
+    const dn = name.length > 20 ? name.slice(0, 19) + '…' : name;
     ctx.fillText(dn, labelEnd - 8, cy + 4);
 
-    // 计数
     ctx.fillStyle = isHovered ? '#a6adc8' : '#565f89';
     ctx.font = '9px sans-serif';
-    ctx.fillText(String(thread.entries.length), labelEnd - 8, cy - 8);
+    ctx.fillText(String(source.entries.length), labelEnd - 8, cy - 8);
 
-    if (!thread._positions) return;
-    const pos = thread._positions, levels = thread._levels;
+    if (!source._positions) return;
+    const pos = source._positions, levels = source._levels;
     const count = pos.length;
     const z = this.zoomLevel, ox = this.offsetX;
 
-    // 密度模式（zoom < 0.3）
     if (z < 0.3) {
       this._drawDensity(ctx, pos, levels, count, cy, labelEnd, plotX2, z, ox);
       return;
     }
 
-    // 逐点绘制 — 按颜色批量路径
+    // 段块模式：相邻条目之间画彩色矩形，形成连续时间线
+    const barH = this.SWIMLANE_H * 0.55;
+    const barY = cy - barH / 2;
+    const minW = Math.max(1, 1 / z * 0.3); // 最小宽度随缩放调整
+
     const buckets = {};
     for (let j = 0; j < count; j++) {
-      const px = pos[j] * z + ox;
-      if (px < labelEnd - 5 || px > plotX2 + 5) continue;
+      const x1 = pos[j] * z + ox;
+      if (x1 > plotX2 + 5) break;
+      const x2 = Math.max(x1 + minW,
+        (j + 1 < count) ? pos[j + 1] * z + ox : x1 + minW);
+      if (x2 < labelEnd - 5) continue;
       const lvl = levels[j];
       const lvlName = ['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][lvl] || 'other';
       if (!buckets[lvlName]) buckets[lvlName] = [];
-      buckets[lvlName].push(px);
+      buckets[lvlName].push(Math.max(x1, labelEnd), Math.min(x2, plotX2));
     }
 
-    const r = this.DOT_R;
-    for (const [lvl, xs] of Object.entries(buckets)) {
+    for (const [lvl, segs] of Object.entries(buckets)) {
       const color = this.LEVEL_COLORS[lvl] || '#a6adc8';
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      for (let k = 0; k < xs.length; k++) {
-        ctx.moveTo(xs[k] + r, cy);
-        ctx.arc(xs[k], cy, r, 0, Math.PI * 2);
-      }
-      ctx.fill();
+      // ERROR/FATAL 发光效果
       if (lvl === 'ERROR' || lvl === 'FATAL') {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        for (let k = 0; k < xs.length; k++) {
-          ctx.moveTo(xs[k] + r + 2, cy);
-          ctx.arc(xs[k], cy, r + 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.25;
+        for (let k = 0; k < segs.length; k += 2) {
+          ctx.fillRect(segs[k] - 1, barY - 1, segs[k + 1] - segs[k] + 2, barH + 2);
         }
-        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = color;
+      for (let k = 0; k < segs.length; k += 2) {
+        ctx.fillRect(segs[k], barY, segs[k + 1] - segs[k], barH);
       }
     }
   },
@@ -479,6 +721,23 @@ const ThreadTimeline = {
       ctx.fillStyle = color;
       ctx.fillRect(px - 0.5, cy - h / 2, 1, h);
     }
+  },
+
+  _drawScrollbar(ctx, cw, ch) {
+    const contentH = this._getContentHeight();
+    const viewH = this._getViewportH();
+    if (contentH <= viewH) return;
+
+    const trackX = cw - 6;
+    const trackH = viewH;
+    const trackY = this.MARGIN.top;
+    const thumbH = Math.max(20, (viewH / contentH) * trackH);
+    const thumbY = trackY + (this.scrollY / contentH) * trackH;
+
+    ctx.fillStyle = '#252636';
+    ctx.fillRect(trackX, trackY, 4, trackH);
+    ctx.fillStyle = '#45475a';
+    ctx.fillRect(trackX, thumbY, 4, thumbH);
   },
 
   _drawTimeAxis(ctx, cw, ch, plotW) {
@@ -516,6 +775,9 @@ const ThreadTimeline = {
         document.querySelectorAll('.timeline-mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this._mode = btn.dataset.mode;
+        this._detailThread = null;
+        this._detailMethods = [];
+        this._updateDetailHeader();
         if (this._mode === 'level') Timeline.show(LogParser.entries);
         else this._refreshFromPidSelect();
       });
@@ -524,9 +786,18 @@ const ThreadTimeline = {
     if (pidSel) pidSel.addEventListener('change', () => this._refreshFromPidSelect());
     const ts = document.getElementById('timeline-thread-search');
     if (ts) ts.addEventListener('input', Utils.debounce(() => this._filterThreads(ts.value), 200));
+
+    const backBtn = document.getElementById('btn-timeline-back');
+    if (backBtn) backBtn.addEventListener('click', () => this.closeThreadDetail());
+
+    const ms = document.getElementById('timeline-method-search');
+    if (ms) ms.addEventListener('input', Utils.debounce(() => this._filterDetailMethods(ms.value), 200));
   },
 
   _refreshFromPidSelect() {
+    this._detailThread = null;
+    this._detailMethods = [];
+    this._updateDetailHeader();
     const pid = document.getElementById('timeline-pid-select')?.value || '';
     const entries = pid ? LogParser.entries.filter(e => e.pid === pid) : LogParser.entries;
     this.show(pid, entries);
@@ -553,12 +824,12 @@ const ThreadTimeline = {
     if (panel && panel.style.display !== 'none') {
       this._refreshDpr();
       this._precomputedPlotW = 0;
+      this._clampScrollY();
       if (this.entries.length > 0) this._draw();
     }
   }
 };
 
-// 全局 escape helper
 function esc(s) {
   if (!s) return '';
   if (!esc._d) esc._d = document.createElement('div');
