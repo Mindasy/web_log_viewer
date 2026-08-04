@@ -93,6 +93,8 @@ const ViewManager = {
     LogFilter.state.pidFilter = '';
     LogFilter.state.threadFilter = '';
     LogFilter.resetSearch();
+    // 同步 DOM 输入框
+    this._syncFilterInputs({ pidFilter: '', threadFilter: '' });
     App.refresh();
     this.renderBreadcrumb();
   },
@@ -109,8 +111,20 @@ const ViewManager = {
     LogFilter.state.pidFilter = view.pidFilter;
     LogFilter.state.threadFilter = view.threadFilter;
     LogFilter.resetSearch();
+    // 同步 DOM 输入框，保持界面一致性
+    this._syncFilterInputs(view);
     // 设置视图数据
     App.setViewData(view.entries);
+  },
+
+  // 同步 DOM 过滤输入框到视图状态
+  _syncFilterInputs(view) {
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) searchInput.value = '';
+    const pidInput = document.getElementById('filter-pid');
+    if (pidInput) pidInput.value = view.pidFilter || '';
+    const threadInput = document.getElementById('filter-thread');
+    if (threadInput) threadInput.value = view.threadFilter || '';
   },
 
   // 渲染面包屑
@@ -121,7 +135,8 @@ const ViewManager = {
       container.style.display = 'none';
       return;
     }
-    let html = '<span class="vb-crumb" data-index="-1">全部日志</span>';
+    const globalActive = this.currentIndex === -1 ? ' active' : '';
+    let html = `<span class="vb-crumb${globalActive}" data-index="-1">全部日志</span>`;
     for (let i = 0; i < this.stack.length; i++) {
       const v = this.stack[i];
       const active = i === this.currentIndex ? ' active' : '';

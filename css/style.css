@@ -556,6 +556,12 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.goto-row-suffix {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 1px;
+}
 .goto-row input {
   width: 95px;
   background: var(--bg-tertiary);
@@ -1203,6 +1209,18 @@ html, body {
   border-radius: var(--radius);
 }
 .bookmark-item .bm-remove:hover { background: rgba(var(--error-rgb),0.15); color: var(--error); }
+.bookmark-item.bm-filtered {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bookmark-item.bm-filtered:hover { background: transparent; }
+.bm-info {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 8px 6px;
+  border-bottom: 1px solid rgba(69,71,90,0.3);
+  text-align: center;
+}
 
 /* Stats */
 #stats-content {

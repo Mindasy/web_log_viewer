@@ -110,18 +110,19 @@ const ThreadTimeline = {
     const plotW = this._getPlotWidth();
     if (plotW <= 0) return;
     const levelMap = { FATAL:0, ERROR:1, WARN:2, INFO:3, DEBUG:4, TRACE:5 };
-    for (const thread of this.threads) {
-      const count = thread.entries.length;
+    const targets = this._detailThread ? this._detailMethods : this.threads;
+    for (const target of targets) {
+      const count = target.entries.length;
       const positions = new Float64Array(count);
       const levels = new Uint8Array(count);
       for (let j = 0; j < count; j++) {
-        const e = thread.entries[j];
+        const e = target.entries[j];
         const t = (e.date.getTime() - this.minTime) / this.timeRange;
         positions[j] = this.MARGIN.left + this.LABEL_WIDTH + t * plotW;
         levels[j] = levelMap[e.level] ?? 6;
       }
-      thread._positions = positions;
-      thread._levels = levels;
+      target._positions = positions;
+      target._levels = levels;
     }
     this._precomputedPlotW = plotW;
   },
@@ -221,13 +222,30 @@ const ThreadTimeline = {
   _extractMethod(entry) {
     const src = entry.source || '';
     if (!src) return '(unknown)';
-    // file:func:linenum 格式，如 "com.example.Service:handle:42"
+    // file:func:linenum 格式，如 "com.example.Service:handle:42" 或 "test.cpp:testFunc:1000"
     if (src.includes(':')) {
       const parts = src.split(':');
       const filePart = parts[0] || '';
       const funcPart = parts[1] || '';
-      const dotParts = filePart.split('.');
-      const className = dotParts.length >= 2 ? dotParts.slice(-1)[0] : filePart;
+      let className;
+      if (filePart.includes('/')) {
+        // 文件路径格式如 "src/utils/helper.go" → 取文件名（不含扩展名）
+        const pathParts = filePart.split('/');
+        const fileName = pathParts[pathParts.length - 1];
+        const dotIdx = fileName.lastIndexOf('.');
+        className = dotIdx > 0 ? fileName.substring(0, dotIdx) : fileName;
+      } else {
+        const dotParts = filePart.split('.');
+        if (dotParts.length === 2) {
+          // 两段如 "test.cpp" → 取文件名（不含扩展名）
+          className = dotParts[0];
+        } else if (dotParts.length >= 3) {
+          // 三段以上如 "com.example.Service" → 取最后一段（类名）
+          className = dotParts[dotParts.length - 1];
+        } else {
+          className = filePart;
+        }
+      }
       if (funcPart) return className + '.' + funcPart;
       return className;
     }
@@ -464,6 +482,9 @@ const ThreadTimeline = {
     const hr = Math.max(6, 10 / this.zoomLevel);
     const px = (x - this.offsetX) / this.zoomLevel;
     const n = pos.length;
+    if (n === 0) return null;
+
+    // 先尝试精确位置匹配
     let lo = 0, hi = n - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
@@ -482,6 +503,23 @@ const ThreadTimeline = {
         if (bestDist < hr + 4) return source.entries[best];
         break;
       }
+    }
+
+    // 段块模式：鼠标在两条目之间（段块中间），找所在段
+    // hi < lo 此时 hi = 最后一个 < px - hr 的索引, lo = 第一个 > px + hr 的索引
+    if (hi >= 0 && lo < n) {
+      // 鼠标在 pos[hi] 和 pos[lo] 之间，属于 pos[hi] 的段
+      if (px > pos[hi] && px < pos[lo]) {
+        return source.entries[hi];
+      }
+    }
+    // 边缘情况：鼠标在最后一个位置之后
+    if (hi === n - 1 && px > pos[hi] && px < pos[hi] + hr * 4) {
+      return source.entries[hi];
+    }
+    // 边缘情况：鼠标在第一个位置之前
+    if (lo === 0 && px < pos[0] && px > pos[0] - hr * 4) {
+      return source.entries[0];
     }
     return null;
   },

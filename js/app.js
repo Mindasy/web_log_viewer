@@ -1013,9 +1013,14 @@ const App = {
         else this.searchNext();
       }
       // Ctrl+S: 导出
-      if (e.ctrlKey && e.key === 's') {
+      if (e.ctrlKey && !e.shiftKey && e.key === 's') {
         e.preventDefault();
         this.exportLogs();
+      }
+      // Ctrl+Shift+S: 保存当前视图
+      if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+        e.preventDefault();
+        this.saveCurrentSearchAsView();
       }
       // Ctrl+G: 跳转到行
       if (e.ctrlKey && e.key === 'g') {
@@ -1215,19 +1220,30 @@ const App = {
       list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">暂无书签</div>';
       return;
     }
-    list.innerHTML = this.bookmarks.map((b, i) => `
-      <div class="bookmark-item" data-index="${b.index}">
-        <span class="bm-index">#${b.index + 1}</span>
-        <span class="bm-level level-${b.level}">${b.level || '-'}</span>
-        <span class="bm-message">${this.escapeHtml(b.message || b.raw)}</span>
-        <span class="bm-remove" data-idx="${i}" title="移除书签">✕</span>
-      </div>
-    `).join('');
+    const visibleIndices = new Set(LogGrid.entries.map(e => e.index));
+    const visibleCount = this.bookmarks.filter(b => visibleIndices.has(b.index)).length;
+    list.innerHTML =
+      `<div class="bm-info">${visibleCount}/${this.bookmarks.length} 在当前视图中可见</div>` +
+      this.bookmarks.map((b, i) => {
+        const visible = visibleIndices.has(b.index);
+        const cls = visible ? 'bookmark-item' : 'bookmark-item bm-filtered';
+        return `
+        <div class="${cls}" data-index="${b.index}" title="${visible ? '点击跳转' : '已被过滤，不可跳转'}">
+          <span class="bm-index">${i + 1}. #${b.index + 1}</span>
+          <span class="bm-level level-${b.level}">${b.level || '-'}</span>
+          <span class="bm-message">${this.escapeHtml(b.message || b.raw)}</span>
+          <span class="bm-remove" data-idx="${i}" title="移除书签">✕</span>
+        </div>`;
+      }).join('');
 
     // 点击书签跳转
     list.querySelectorAll('.bookmark-item').forEach(item => {
       item.addEventListener('click', (e) => {
         if (e.target.classList.contains('bm-remove')) return;
+        if (item.classList.contains('bm-filtered')) {
+          Utils.showToast('该书签已被当前过滤条件排除，请清除过滤后重试', 'error', 2500);
+          return;
+        }
         const idx = parseInt(item.dataset.index);
         const entry = LogParser.entries.find(e => e.index === idx);
         if (entry) {
@@ -1597,16 +1613,19 @@ const App = {
     if (!val) return;
 
     const hasSearch = LogFilter.searchMatches.length > 0;
+    const hasView = ViewManager.currentIndex >= 0;
+    const totalRows = LogGrid.totalRows;
+    const globalTotal = LogParser.entries.length;
 
     // $: 跳转到末行
     if (val === '$') {
       LogGrid.jumpToBottom();
       input.value = '';
-      Utils.showToast(`已跳转到末行（原始行号 ${LogParser.entries.length}）`, 'success');
+      Utils.showToast(`已跳转到末行（视图 ${totalRows} / 全部 ${globalTotal} 条）`, 'success');
       return;
     }
 
-    // +N / -N: 相对偏移
+    // +N / -N: 相对偏移（在当前视图内）
     if (val.startsWith('+') || val.startsWith('-')) {
       const offset = parseInt(val, 10);
       if (isNaN(offset) || offset === 0) {
@@ -1614,42 +1633,48 @@ const App = {
         return;
       }
       const curIdx = LogGrid.selectedIndex;
-      const targetIdx = Math.max(0, Math.min(curIdx + offset, LogParser.entries.length - 1));
+      if (curIdx < 0) {
+        Utils.showToast('请先选中一行', 'error');
+        return;
+      }
+      const targetIdx = Math.max(0, Math.min(curIdx + offset, totalRows - 1));
+      if (targetIdx === curIdx) {
+        Utils.showToast('已到边界，无法继续偏移', 'error');
+        return;
+      }
       LogGrid.selectRow(targetIdx);
       const dir = offset > 0 ? '后' : '前';
-      Utils.showToast(`已向${dir}偏移 ${Math.abs(offset)} 行`, 'success');
-      return;
-    }
-
-    if (val.startsWith('#')) {
-      const searchIdx = parseInt(val.substring(1), 10);
-      if (hasSearch && !isNaN(searchIdx) && searchIdx >= 1 && searchIdx <= LogFilter.searchMatches.length) {
-        LogFilter.currentMatchIndex = searchIdx - 1;
-        const entry = LogFilter.searchMatches[searchIdx - 1];
-        LogGrid.scrollToEntry(entry);
-        this.updateSearchStats();
-        Utils.showToast(`已跳转到第 ${searchIdx} 个搜索结果（原始行号 ${entry.index + 1}）`, 'success');
-        input.value = '';
-        return;
-      }
-      const lineNum = parseInt(val.substring(1), 10);
-      if (isNaN(lineNum) || lineNum < 1) {
-        Utils.showToast('请输入有效的行号', 'error');
-        return;
-      }
-      const entry = LogParser.entries.find(e => (e.index + 1) === lineNum);
-      if (!entry) {
-        Utils.showToast(`未找到原始行号 ${lineNum}（有效范围 1-${LogParser.entries.length}）`, 'error');
-        return;
-      }
-      LogGrid.scrollToEntry(entry);
-      Utils.showToast(`已跳转到原始行号 ${lineNum}`, 'success');
+      const entry = LogGrid.entries[targetIdx];
+      const origLine = entry ? entry.index + 1 : '?';
+      Utils.showToast(`已向${dir}偏移 ${Math.abs(offset)} 行（原始行号 ${origLine}）`, 'success');
       input.value = '';
       return;
     }
 
+    // #N: 当前视图第 N 行（有搜索时 = 第 N 个搜索结果）
+    if (val.startsWith('#')) {
+      const num = parseInt(val.substring(1), 10);
+      if (isNaN(num) || num < 1 || num > totalRows) {
+        Utils.showToast(`视图内行号无效（有效范围 1-${totalRows}）`, 'error');
+        return;
+      }
+      if (hasSearch) {
+        LogFilter.currentMatchIndex = num - 1;
+        const entry = LogFilter.searchMatches[num - 1];
+        LogGrid.scrollToEntry(entry);
+        this.updateSearchStats();
+        Utils.showToast(`已跳转到第 ${num} 个搜索结果（原始行号 ${entry.index + 1}）`, 'success');
+      } else {
+        LogGrid.selectRow(num - 1);
+        const entry = LogGrid.entries[num - 1];
+        Utils.showToast(`已跳转到视图第 ${num} 行（原始行号 ${entry ? entry.index + 1 : '?'}）`, 'success');
+      }
+      input.value = '';
+      return;
+    }
+
+    // @N: 跳转到第 N 个书签
     if (val.startsWith('@')) {
-      // @N: 跳转到第 N 个书签
       if (this.bookmarks.length === 0) {
         Utils.showToast('没有书签', 'error');
         return;
@@ -1660,12 +1685,13 @@ const App = {
         return;
       }
       const entry = this.bookmarks[bmIdx - 1];
-      LogGrid.scrollToEntry(entry);
+      if (!LogGrid.scrollToEntry(entry)) return;
       Utils.showToast(`已跳转到第 ${bmIdx} 个书签（原始行号 ${entry.index + 1}）`, 'success');
       input.value = '';
       return;
     }
 
+    // 纯数字：原始行号（有搜索时在搜索结果中查找，无搜索时直接跳转）
     const lineNum = parseInt(val, 10);
     if (isNaN(lineNum) || lineNum < 1) {
       Utils.showToast('请输入有效的行号', 'error');
@@ -1684,16 +1710,17 @@ const App = {
       this.updateSearchStats();
       Utils.showToast(`已跳转到原始行号 ${lineNum}（搜索结果第 ${matchIdx + 1}/${LogFilter.searchMatches.length} 个）`, 'success');
       input.value = '';
-    } else {
-      const entry = LogParser.entries.find(e => (e.index + 1) === lineNum);
-      if (!entry) {
-        Utils.showToast(`未找到原始行号 ${lineNum}（有效范围 1-${LogParser.entries.length}）`, 'error');
-        return;
-      }
-      LogGrid.scrollToEntry(entry);
-      Utils.showToast(`已跳转到原始行号 ${lineNum}`, 'success');
-      input.value = '';
+      return;
     }
+
+    const entry = LogParser.entries.find(e => (e.index + 1) === lineNum);
+    if (!entry) {
+      Utils.showToast(`未找到原始行号 ${lineNum}（有效范围 1-${globalTotal}）`, 'error');
+      return;
+    }
+    if (!LogGrid.scrollToEntry(entry)) return;
+    Utils.showToast(`已跳转到原始行号 ${lineNum}`, 'success');
+    input.value = '';
   },
 
   updateSearchStats() {
@@ -1710,19 +1737,33 @@ const App = {
   updateCurrentRow() {
     const cur = document.getElementById('goto-row-cur');
     const total = document.getElementById('goto-row-total');
+    const suffix = document.getElementById('goto-row-suffix');
     if (!cur || !total) return;
     if (LogGrid.totalRows === 0) {
       cur.textContent = '-';
       total.textContent = '-';
+      if (suffix) suffix.textContent = '';
       return;
     }
     if (LogGrid.selectedIndex < 0) {
       cur.textContent = '-';
       total.textContent = LogGrid.totalRows;
+      if (suffix) {
+        const hasView = ViewManager.currentIndex >= 0;
+        const globalTotal = LogParser.entries.length;
+        suffix.textContent = hasView && LogGrid.totalRows !== globalTotal
+          ? ` (全部 ${globalTotal})` : '';
+      }
       return;
     }
     cur.textContent = LogGrid.selectedIndex + 1;
     total.textContent = LogGrid.totalRows;
+    if (suffix) {
+      const hasView = ViewManager.currentIndex >= 0;
+      const globalTotal = LogParser.entries.length;
+      suffix.textContent = hasView && LogGrid.totalRows !== globalTotal
+        ? ` (全部 ${globalTotal})` : '';
+    }
   },
 
   // ===== 更新文件信息 =====

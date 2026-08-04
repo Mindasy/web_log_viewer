@@ -504,6 +504,18 @@ def _(t, flags):
     else:
         t.fail("缺少命中半径自适应缩放")
 
+    # 段块命中检测
+    if 'pos[hi]' in js and 'pos[lo]' in js and 'px > pos[hi]' in js:
+        t.ok("段块命中检测 (pos[hi] < px < pos[lo])")
+    else:
+        t.fail("缺少段块命中检测")
+
+    # 边缘命中检测
+    if 'pos[hi] + hr' in js or 'pos[0] - hr' in js:
+        t.ok("边缘命中检测")
+    else:
+        t.fail("缺少边缘命中检测")
+
     # 垂直滚动
     if 'scrollY' in js and '_clampScrollY' in js:
         t.ok("垂直滚动支持")
@@ -521,6 +533,12 @@ def _(t, flags):
         t.ok("滚动条绘制")
     else:
         t.fail("缺少滚动条绘制")
+
+    # _precomputePositions 详情模式
+    if '_detailMethods' in js and '_precomputePositions' in js:
+        t.ok("_precomputePositions 处理详情模式")
+    else:
+        t.fail("_precomputePositions 未处理详情模式")
 
 
 @suite.test("线程详情方法时间线功能")
@@ -682,6 +700,9 @@ const cases = [
   ['', '(unknown)'],
   ['com.example.Service.methodName', 'Service.methodName'],
   ['com.example.Service:handle:42', 'Service.handle'],
+  ['test.cpp:testFunc:1000', 'test.testFunc'],
+  ['main.cpp:main:55', 'main.main'],
+  ['src/utils/helper.go:Process:88', 'helper.Process'],
   ['com.example.web.UserController:login:128', 'UserController.login'],
   ['com.example.scheduler.TaskRunner:run:55', 'TaskRunner.run'],
   ['com.example.Service:process', 'Service.process'],
@@ -847,3 +868,144 @@ def _(t, flags):
         t.ok("filter-pid 在 searchIds 中")
     else:
         t.fail("filter-pid 不在 searchIds 中")
+
+
+# ===== gotoLine 书签/跳转行逻辑 =====
+
+@suite.test("gotoLine #N 视图行号跳转")
+def _(t, flags):
+    """验证 #N 表示当前视图第N行（合并了原 :N 语法）"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    # 验证 :N 语法已移除
+    if "val.startsWith(':'))" in js or "val.startsWith(':')" in js:
+        t.fail(":N 语法应已移除，合并到 #N")
+    else:
+        t.ok(":N 语法已移除")
+
+    # 验证 #N 使用视图内行号
+    if "视图内行号无效" in js:
+        t.ok("#N 使用视图内行号范围校验")
+    else:
+        t.fail("#N 缺少视图内行号校验")
+
+    # 验证 #N 在搜索模式下 = 第N个搜索结果
+    if '第 ${num} 个搜索结果' in js:
+        t.ok("#N 搜索模式下 = 第N个搜索结果")
+    else:
+        t.fail("#N 搜索模式缺少结果序号提示")
+
+
+@suite.test("gotoLine @N 书签跳转使用数组索引")
+def _(t, flags):
+    """验证 @N 按书签列表序号跳转（1-based 数组索引）"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    # 验证 @N 使用数组索引
+    if 'this.bookmarks[bmIdx - 1]' in js or 'this.bookmarks[bmIdx-1]' in js:
+        t.ok("@N 按书签列表序号跳转")
+    else:
+        t.fail("@N 未使用书签列表序号")
+
+    # 验证 @N 提示信息
+    if '书签序号无效' in js:
+        t.ok("@N 错误提示明确")
+    else:
+        t.fail("@N 缺少明确错误提示")
+
+    # 验证 @N 不再使用 find 按行号匹配
+    if "this.bookmarks.find(b => (b.index + 1) === lineNum)" in js:
+        t.fail("@N 不应再按全局行号查找")
+    else:
+        t.ok("@N 已移除全局行号匹配方式")
+
+
+@suite.test("gotoLine 纯数字 = 原始行号")
+def _(t, flags):
+    """验证纯数字始终表示原始行号（不再随视图模式改变）"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    # 验证纯数字注释说明
+    if '纯数字：原始行号' in js:
+        t.ok("纯数字注释为原始行号")
+    else:
+        t.fail("纯数字注释未明确为原始行号")
+
+    # 验证不再有视图模式下的纯数字特殊处理
+    if '在视图中：纯数字 = 视图内行号' in js:
+        t.fail("纯数字不应再随视图模式改变含义")
+    else:
+        t.ok("纯数字不再随视图模式改变")
+
+
+@suite.test("gotoLine +/-N 偏移后清空输入框")
+def _(t, flags):
+    """验证 +/-N 偏移后 input.value 被清空"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    idx = js.find('已向${dir}偏移')
+    if idx > 0:
+        nearby = js[idx:idx + 200]
+        if "input.value = ''" in nearby or "input.value = \"\"" in nearby:
+            t.ok("+/-N 偏移后清空 input.value")
+        else:
+            t.fail("+/-N 偏移后未清空 input.value")
+    else:
+        t.fail("无法定位 +/-N 偏移代码")
+
+
+@suite.test("书签面板显示序号")
+def _(t, flags):
+    """验证书签面板显示序号（1. 2. 3. ...）"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if '${i + 1}. #${b.index + 1}' in js or '${i+1}. #${b.index + 1}' in js:
+        t.ok("书签面板显示序号和行号")
+    else:
+        t.fail("书签面板未显示序号")
+
+
+@suite.test("被过滤书签点击提示")
+def _(t, flags):
+    """验证点击被过滤的书签时显示提示而非静默失败"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if 'bm-filtered' in js and '该书签已被当前过滤条件排除' in js:
+        t.ok("被过滤书签点击有明确提示")
+    else:
+        t.fail("被过滤书签点击缺少提示")
+
+
+@suite.test("scrollToEntry 返回布尔值并显示 toast")
+def _(t, flags):
+    """验证 scrollToEntry 返回 true/false 并在过滤时显示 toast"""
+    grid_path = os.path.join(ROOT, 'js', 'grid.js')
+    js = open(grid_path, encoding='utf-8').read()
+
+    if 'return true' in js and 'return false' in js:
+        t.ok("scrollToEntry 返回布尔值")
+    else:
+        t.fail("scrollToEntry 未返回布尔值")
+
+    if '已被当前过滤条件排除' in js:
+        t.ok("scrollToEntry 过滤排除时显示 toast")
+    else:
+        t.fail("scrollToEntry 缺少过滤排除提示")
+
+
+@suite.test("gotoLine $ 末行跳转含视图统计")
+def _(t, flags):
+    """验证 $ 跳转末行时显示视图行数/全部行数"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if '视图 ${totalRows} / 全部 ${globalTotal}' in js:
+        t.ok("$ 末行跳转显示视图/全部统计")
+    else:
+        t.fail("$ 末行跳转缺少统计信息")
