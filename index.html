@@ -60,7 +60,8 @@
         <span id="goto-row-cur" class="goto-row-cur" title="当前选中行">-</span>
         <span class="goto-row-sep">/</span>
         <span id="goto-row-total" class="goto-row-total" title="总行数">-</span>
-        <input type="text" id="goto-line-input" placeholder="行号/#搜索/@书签/$末行" title="行号 | #N=第N个搜索结果 | @N=第N个书签 | $=末行 | +/-N=相对偏移" />
+        <span id="goto-row-suffix" class="goto-row-suffix"></span>
+        <input type="text" id="goto-line-input" placeholder="#N视图行号/原始行号/@N书签/$末行" title="#N=当前视图第N行(有搜索时=第N个结果) | 纯数字=原始行号 | @N=第N个书签 | $=末行 | +/-N=相对偏移" />
         <button id="btn-goto-line" title="跳转">→</button>
         <span class="goto-row-divider"></span>
         <button id="btn-scroll-top" class="goto-nav-btn" title="跳转到首行 (Home)">⬆</button>
@@ -935,6 +936,7 @@
         <tr><td><kbd>Ctrl+F</kbd></td><td>聚焦搜索</td></tr>
         <tr><td><kbd>Ctrl+G</kbd></td><td>跳转到行</td></tr>
         <tr><td><kbd>Ctrl+S</kbd></td><td>导出过滤结果</td></tr>
+        <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>保存当前视图</td></tr>
         <tr><td><kbd>F3</kbd></td><td>下一个搜索结果</td></tr>
         <tr><td><kbd>Shift+F3</kbd></td><td>上一个搜索结果</td></tr>
         <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>上/下一行</td></tr>
@@ -946,8 +948,8 @@
     <div class="help-section">
       <h3>跳转语法</h3>
       <table class="help-shortcuts">
-        <tr><td><code>42</code></td><td>跳转到第 42 行</td></tr>
-        <tr><td><code>#5</code></td><td>第 5 个搜索结果</td></tr>
+        <tr><td><code>42</code></td><td>跳转到原始行号 42</td></tr>
+        <tr><td><code>#5</code></td><td>当前视图第 5 行（搜索时 = 第 5 个结果）</td></tr>
         <tr><td><code>@3</code></td><td>第 3 个书签</td></tr>
         <tr><td><code>$</code></td><td>末行</td></tr>
         <tr><td><code>+50</code></td><td>向后 50 行</td></tr>

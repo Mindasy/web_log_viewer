@@ -460,6 +460,7 @@ const LogGrid = {
 
   onScroll() {
     if (this._scrollThrottled) return;
+    if (this._renderingScroll) return;
     this._scrollThrottled = true;
     requestAnimationFrame(() => {
       this._scrollThrottled = false;
@@ -585,19 +586,17 @@ const LogGrid = {
     const end = Math.min(start + this.visibleCount + 5, this.totalRows);
     this.renderedRange = { start, end };
 
-    this.viewport.style.height = cssHeight + 'px';
-
     const hlCache = LogFilter.state.highlight && LogFilter.state.searchText
       ? LogFilter.computeBatchHighlights(this.entries, start, end) : null;
 
     const fragment = document.createDocumentFragment();
 
     const rowsHeight = (end - start) * this.rowHeight;
-    const maxTopSpacerHeight = Math.max(0, cssHeight - rowsHeight);
     const clientH = this.gridBody.clientHeight || 1;
     const expectedNativeSt = ScrollMath.syncToNative(this._virtualRow, this.totalRows, clientH);
-    const topSpacerHeight = Math.min(expectedNativeSt, maxTopSpacerHeight);
+    const topSpacerHeight = expectedNativeSt;
     const bottomSpacerHeight = Math.max(0, cssHeight - topSpacerHeight - rowsHeight);
+    this.viewport.style.height = Math.max(cssHeight, topSpacerHeight + rowsHeight + bottomSpacerHeight) + 'px';
 
     const topSpacer = document.createElement('div');
     topSpacer.style.height = topSpacerHeight + 'px';
@@ -617,6 +616,16 @@ const LogGrid = {
 
     this.viewport.textContent = '';
     this.viewport.appendChild(fragment);
+
+    // 渲染完成后同步滚动位置，确保浏览器 scrollTop 与 topSpacer 一致
+    this._renderingScroll = true;
+    this.gridBody.scrollTop = expectedNativeSt;
+    // 延迟清除标志，确保同步/异步 scroll 事件均被抑制
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        this._renderingScroll = false;
+      });
+    });
 
     this._renderScrollbar();
     this._updateScrollButtons();
@@ -718,18 +727,12 @@ const LogGrid = {
     if (displayIndex < 0 || displayIndex >= this.totalRows) return;
     this.selectedIndex = displayIndex;
 
-    // 行级比较：仅当目标行不在当前可视范围内才滚动
-    const renderStart = this._virtualRow;
-    const renderEnd = renderStart + this.visibleCount;
-    const visibleRows = Math.max(1, renderEnd - renderStart);
+    // 基于视口实际可见行数（不含 buffer）计算居中位置，确保目标行始终可见
+    const viewportRows = Math.max(1, Math.ceil(this.gridBody.clientHeight / this.rowHeight));
+    const centerOffset = Math.floor(viewportRows / 2);
+    const targetVR = Math.max(0, Math.min(displayIndex - centerOffset, this.totalRows - viewportRows));
 
-    if (displayIndex < renderStart) {
-      this._virtualRow = displayIndex;
-    } else if (displayIndex >= renderEnd) {
-      this._virtualRow = Math.min(displayIndex - visibleRows + 1, this.totalRows - visibleRows);
-    }
-
-    this._syncNativeScroll();
+    this._virtualRow = targetVR;
     this.render();
     App.updateCurrentRow();
     if (displayIndex >= 0 && displayIndex < this.entries.length) {
@@ -742,7 +745,11 @@ const LogGrid = {
     const idx = this.entries.findIndex(e => e.index === entry.index);
     if (idx >= 0) {
       this.selectRow(idx);
+      return true;
     }
+    // 条目被当前过滤条件排除
+    Utils.showToast('该条目已被当前过滤条件排除，请清除过滤后重试', 'error', 3000);
+    return false;
   },
 
   updateStatusBar() {
