@@ -339,6 +339,39 @@ const ThreadTimeline = {
     this._draw();
   },
 
+  // 自适应时间刻度：根据可视时间窗口生成对齐的刻度，避免放大后刻度消失
+  _getTimeTicks() {
+    const visibleRange = this.timeRange / Math.max(this.zoomLevel, 0.0001);
+    const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+      10000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000,
+      7200000, 14400000, 21600000, 43200000, 86400000, 172800000,
+      432000000, 864000000, 1728000000, 2592000000];
+    let step = steps[steps.length - 1];
+    const target = visibleRange / 8;
+    for (const s of steps) {
+      if (s >= target) { step = s; break; }
+    }
+    const fmt = this._getTickFormat(step, visibleRange);
+    const ticks = [];
+    // 覆盖平移后可能进入视口的时间范围（缩小时可视窗口超出数据范围）
+    const t0 = Math.floor((this.minTime - visibleRange) / step) * step;
+    const t1 = this.maxTime + visibleRange;
+    for (let t = t0; t <= t1; t += step) {
+      ticks.push({ t, fmt });
+    }
+    return ticks;
+  },
+
+  // 根据刻度步长选择标签格式（跨天窗口自动带上日期）
+  _getTickFormat(step, visibleRange) {
+    const multiDay = visibleRange >= 86400000;
+    if (step >= 86400000) return 'MM-dd';
+    if (step >= 3600000) return multiDay ? 'MM-dd HH:mm' : 'HH:mm';
+    if (step >= 60000) return multiDay ? 'MM-dd HH:mm' : 'HH:mm';
+    if (step >= 1000) return 'HH:mm:ss';
+    return 'HH:mm:ss.SSS';
+  },
+
   // ===== 垂直滚动 =====
 
   _getContentHeight() {
@@ -359,10 +392,23 @@ const ThreadTimeline = {
 
   // ===== Canvas 事件 =====
 
+  // 当前是否激活线程模式（线程/级别共用同一 canvas，未激活时不处理事件）
+  _isActive() {
+    const btn = document.querySelector('.timeline-mode-btn.active');
+    return !!(btn && btn.dataset.mode === 'thread');
+  },
+
   _bindCanvasEvents() {
-    this.canvas.addEventListener('mousedown', e => this._onMD(e));
-    this.canvas.addEventListener('mousemove', e => this._onMM(e));
+    this.canvas.addEventListener('mousedown', e => {
+      if (!this._isActive()) return;
+      this._onMD(e);
+    });
+    this.canvas.addEventListener('mousemove', e => {
+      if (!this._isActive()) return;
+      this._onMM(e);
+    });
     this.canvas.addEventListener('mouseup', () => {
+      if (!this._isActive()) return;
       this.dragging = false;
       if (this._labelResizing) {
         this._labelResizing = false;
@@ -371,6 +417,7 @@ const ThreadTimeline = {
       }
     });
     this.canvas.addEventListener('mouseleave', () => {
+      if (!this._isActive()) return;
       this.dragging = false;
       this._labelResizing = false;
       this._hoveredThreadIdx = -1;
@@ -379,29 +426,35 @@ const ThreadTimeline = {
     });
     this.canvas.addEventListener('wheel', e => {
       e.preventDefault();
+      if (!this._isActive()) return;
       const rect = this.canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
+      const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
+      const overLabel = mx < labelEnd;
       const contentH = this._getContentHeight();
       const viewH = this._getViewportH();
-      const canScrollV = contentH > viewH;
 
       if (e.ctrlKey || e.metaKey) {
-        // Ctrl/Cmd + 滚轮 = 缩放
-        e.deltaY < 0 ? this.zoomIn(mx) : this.zoomOut(mx);
+        // Ctrl/Cmd + 滚轮 = 缩放（任意区域，锚点取绘图区起点避免异常偏移）
+        const anchor = Math.max(labelEnd, mx);
+        e.deltaY < 0 ? this.zoomIn(anchor) : this.zoomOut(anchor);
       } else if (e.shiftKey) {
         // Shift + 滚轮 = 水平平移
         this.offsetX -= e.deltaY * 2;
         this._draw();
-      } else if (canScrollV) {
-        // 垂直滚动
-        this.scrollY = Math.max(0, Math.min(this.scrollY + e.deltaY, contentH - viewH));
-        this._draw();
+      } else if (overLabel) {
+        // 标签列：垂直滚动线程/方法列表（不与缩放冲突）
+        if (contentH > viewH) {
+          this.scrollY = Math.max(0, Math.min(this.scrollY + e.deltaY, contentH - viewH));
+          this._draw();
+        }
       } else {
-        // 无溢出时 = 缩放
+        // 绘图区：滚轮 = 缩放时间轴
         e.deltaY < 0 ? this.zoomIn(mx) : this.zoomOut(mx);
       }
     });
     this.canvas.addEventListener('click', e => {
+      if (!this._isActive()) return;
       // 拖拽 label 列宽度刚结束 → 忽略本次 click，避免误触
       if (this._suppressClick) {
         this._suppressClick = false;
@@ -451,6 +504,7 @@ const ThreadTimeline = {
 
     // 双击进入线程详情 / 双击 label 边界重置列宽
     this.canvas.addEventListener('dblclick', e => {
+      if (!this._isActive()) return;
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
       if (y >= this.MARGIN.top && Math.abs(x - this.LABEL_WIDTH) <= 8) {
@@ -471,12 +525,18 @@ const ThreadTimeline = {
       }
     });
 
-    document.getElementById('btn-timeline-zoom-in').addEventListener('click',
-      () => this.zoomIn(this.canvas.width / this._dpr / 2));
-    document.getElementById('btn-timeline-zoom-out').addEventListener('click',
-      () => this.zoomOut(this.canvas.width / this._dpr / 2));
-    document.getElementById('btn-timeline-fit').addEventListener('click',
-      () => this.fitToData());
+    document.getElementById('btn-timeline-zoom-in').addEventListener('click', () => {
+      if (!this._isActive()) return;
+      this.zoomIn(this.canvas.width / this._dpr / 2);
+    });
+    document.getElementById('btn-timeline-zoom-out').addEventListener('click', () => {
+      if (!this._isActive()) return;
+      this.zoomOut(this.canvas.width / this._dpr / 2);
+    });
+    document.getElementById('btn-timeline-fit').addEventListener('click', () => {
+      if (!this._isActive()) return;
+      this.fitToData();
+    });
   },
 
   _onMD(e) {
@@ -491,6 +551,8 @@ const ThreadTimeline = {
       return;
     }
     this.dragging = true;
+    // 区域化拖拽：绘图区 = 水平平移，标签列 = 垂直滚动（互不冲突）
+    this._dragMode = (x < this.MARGIN.left + this.LABEL_WIDTH) ? 'vscroll' : 'hpan';
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
     this.dragStartOffset = this.offsetX;
@@ -502,13 +564,18 @@ const ThreadTimeline = {
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
 
     if (this.dragging) {
-      this.offsetX = this.dragStartOffset + (e.clientX - this.dragStartX);
-      const contentH = this._getContentHeight();
-      const viewH = this._getViewportH();
-      if (contentH > viewH) {
-        this.scrollY = Math.max(0, Math.min(
-          this.dragStartScrollY - (e.clientY - this.dragStartY),
-          contentH - viewH));
+      if (this._dragMode === 'hpan') {
+        // 绘图区拖拽：仅水平平移时间轴
+        this.offsetX = this.dragStartOffset + (e.clientX - this.dragStartX);
+      } else {
+        // 标签列拖拽：仅垂直滚动列表
+        const contentH = this._getContentHeight();
+        const viewH = this._getViewportH();
+        if (contentH > viewH) {
+          this.scrollY = Math.max(0, Math.min(
+            this.dragStartScrollY - (e.clientY - this.dragStartY),
+            contentH - viewH));
+        }
       }
       this._draw();
       return;
@@ -778,11 +845,10 @@ const ThreadTimeline = {
     ctx.strokeStyle = this._tc.border; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(labelEnd, 0); ctx.lineTo(labelEnd, ch); ctx.stroke();
 
-    // 垂直时间网格线
-    const tickCount = Math.max(2, Math.floor(8 / this.zoomLevel));
+    // 垂直时间网格线（自适应可视窗口）
+    const ticks = this._getTimeTicks();
     ctx.strokeStyle = this._tc.borderSoft; ctx.lineWidth = 0.5;
-    for (let i = 0; i <= tickCount; i++) {
-      const t = this.minTime + (this.timeRange / tickCount) * i;
+    for (const { t } of ticks) {
       const px = labelEnd + ((t - this.minTime) / this.timeRange) * plotW * this.zoomLevel + this.offsetX;
       if (px >= labelEnd && px <= plotX2) {
         ctx.beginPath(); ctx.moveTo(px, this.MARGIN.top); ctx.lineTo(px, ch - this.MARGIN.bottom); ctx.stroke();
@@ -997,37 +1063,17 @@ const ThreadTimeline = {
       ctx.restore();
     }
 
-    // 时间刻度：根据跨度自适应格式（跨天显示日期维度）
+    // 时间刻度：根据可视窗口自适应（放大后仍保持合理的刻度密度）
+    const ticks = this._getTimeTicks();
     ctx.textAlign = 'center';
-    const tickCount = Math.max(2, Math.floor(8 / this.zoomLevel));
-    const multiDay = rangeMs >= DAY;
-    const week = 7 * DAY;
-    let fmt;
-    if (rangeMs < 60 * 1000) fmt = 'HH:mm:ss';
-    else if (!multiDay) fmt = 'HH:mm';
-    else if (rangeMs < week) fmt = 'MM-dd HH:mm';
-    else fmt = 'MM-dd';
-
-    for (let i = 0; i <= tickCount; i++) {
-      const t = this.minTime + (this.timeRange / tickCount) * i;
+    for (const { t, fmt } of ticks) {
       const px = labelEnd + ((t - this.minTime) / this.timeRange) * plotW * this.zoomLevel + this.offsetX;
-      if (px >= labelEnd && px <= plotX2) {
-        if (multiDay && rangeMs < week) {
-          // 跨天：两行显示 日期 + 时间，避免日期混淆
-          ctx.fillStyle = tc.text;
-          ctx.font = '10px monospace';
-          ctx.fillText(Utils.formatDate(new Date(t), 'MM-dd'), px, axisY + 14);
-          ctx.fillStyle = tc.textMuted;
-          ctx.font = '9px monospace';
-          ctx.fillText(Utils.formatDate(new Date(t), 'HH:mm'), px, axisY + 25);
-        } else {
-          ctx.fillStyle = tc.text;
-          ctx.font = '10px monospace';
-          ctx.fillText(Utils.formatDate(new Date(t), fmt), px, axisY + 14);
-        }
-        ctx.strokeStyle = tc.border; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(px, axisY - 2); ctx.lineTo(px, axisY + 4); ctx.stroke();
-      }
+      if (px < labelEnd || px > plotX2) continue;
+      ctx.fillStyle = tc.text;
+      ctx.font = '10px monospace';
+      ctx.fillText(Utils.formatDate(new Date(t), fmt), px, axisY + 14);
+      ctx.strokeStyle = tc.border; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px, axisY - 2); ctx.lineTo(px, axisY + 4); ctx.stroke();
     }
   },
 
