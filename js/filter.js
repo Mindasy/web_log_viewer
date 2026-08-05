@@ -22,6 +22,7 @@ const LogFilter = {
     threadFilter: '',
     pidFilter: '',
     sourceFilter: '',
+    methodFilter: '',
     messageFilter: '',
     timeFrom: null,
     timeTo: null,
@@ -49,6 +50,7 @@ const LogFilter = {
     const fromTime = st.timeFrom ? new Date(st.timeFrom).getTime() : null;
     const toTime = st.timeTo ? new Date(st.timeTo).getTime() : null;
     const srcFile = st.sourceFileFilter;
+    const methodName = st.methodFilter;
 
     const result = [];
     if (hasSearch) this.searchMatches = [];
@@ -72,8 +74,11 @@ const LogFilter = {
         this.searchMatches.push(e);
       }
 
-      if (threadRe && !threadRe.test(e.thread)) continue;
+      // 线程过滤：同时匹配 thread 和 tid（时间线标签可能来自 tid）
+      if (threadRe && !threadRe.test(e.thread) && !(e.tid && threadRe.test(e.tid))) continue;
       if (sourceRe && !sourceRe.test(e.source)) continue;
+      // 方法过滤：与时间线方法名精确一致（由 timeline 点击设置）
+      if (methodName && Utils.extractMethodName(e.source) !== methodName) continue;
       if (msgRe && !msgRe.test(e.message)) continue;
       if (fromTime && (!e.date || e.date.getTime() < fromTime)) continue;
       if (toTime && (!e.date || e.date.getTime() > toTime)) continue;

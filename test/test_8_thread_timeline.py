@@ -558,41 +558,50 @@ def _(t, flags):
     else:
         t.fail("_extractMethod 未使用 entry.source")
 
-    if "split('.')" in js:
-        t.ok("_extractMethod 使用点号分割")
-    else:
-        t.fail("_extractMethod 未使用点号分割")
+    # 方法名提取逻辑已迁移到 Utils.extractMethodName（filter.js 也需要复用）
+    utils_path = os.path.join(ROOT, 'js', 'utils.js')
+    ujs = open(utils_path, encoding='utf-8').read()
 
-    if "slice(-2)" in js:
-        t.ok("_extractMethod 取最后两段作为方法标识")
+    if 'extractMethodName' in ujs:
+        t.ok("Utils.extractMethodName 已定义")
     else:
-        t.fail("_extractMethod 未取最后两段")
+        t.fail("缺少 Utils.extractMethodName")
 
-    if "'(unknown)'" in js:
+    if "split('.')" in ujs:
+        t.ok("extractMethodName 使用点号分割")
+    else:
+        t.fail("extractMethodName 未使用点号分割")
+
+    if "slice(-2)" in ujs:
+        t.ok("extractMethodName 取最后两段作为方法标识")
+    else:
+        t.fail("extractMethodName 未取最后两段")
+
+    if "'(unknown)'" in ujs:
         t.ok("空 source 返回 '(unknown)'")
     else:
         t.fail("缺少空 source 处理")
 
     # file:func:linenum 格式支持
-    if "includes(':')" in js:
-        t.ok("_extractMethod 支持 file:func:linenum 格式")
+    if "includes(':')" in ujs:
+        t.ok("extractMethodName 支持 file:func:linenum 格式")
     else:
-        t.fail("_extractMethod 缺少冒号格式支持")
+        t.fail("extractMethodName 缺少冒号格式支持")
 
-    if "split(':')" in js:
-        t.ok("_extractMethod 使用冒号分割")
+    if "split(':')" in ujs:
+        t.ok("extractMethodName 使用冒号分割")
     else:
-        t.fail("_extractMethod 未使用冒号分割")
+        t.fail("extractMethodName 未使用冒号分割")
 
-    if "funcPart" in js:
-        t.ok("_extractMethod 提取 funcPart")
+    if "funcPart" in ujs:
+        t.ok("extractMethodName 提取 funcPart")
     else:
-        t.fail("_extractMethod 缺少 funcPart 提取")
+        t.fail("extractMethodName 缺少 funcPart 提取")
 
-    if "className" in js:
-        t.ok("_extractMethod 提取 className")
+    if "className" in ujs:
+        t.ok("extractMethodName 提取 className")
     else:
-        t.fail("_extractMethod 缺少 className 提取")
+        t.fail("extractMethodName 缺少 className 提取")
 
     # 方法分组
     if '_groupByMethod' in js:
@@ -661,40 +670,47 @@ def _(t, flags):
 
 @suite.test("_extractMethod 方法提取逻辑验证")
 def _(t, flags):
-    """验证 _extractMethod 对各种 source 格式的提取结果"""
+    """验证 _extractMethod 对各种 source 格式的提取结果（复用 Utils.extractMethodName）"""
 
     js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
     js = open(js_path, encoding='utf-8').read()
+    utils_path = os.path.join(ROOT, 'js', 'utils.js')
+    ujs = open(utils_path, encoding='utf-8').read()
 
-    # 提取 _extractMethod 函数体
-    func_start = js.find('_extractMethod(entry)')
+    # 从 utils.js 提取 extractMethodName 函数体
+    func_start = ujs.find('extractMethodName(src)')
     if func_start < 0:
-        t.fail("无法定位 _extractMethod 函数")
+        t.fail("无法定位 extractMethodName 函数")
         return
-    # 找到函数体开始的大括号
-    brace_start = js.find('{', func_start)
+    brace_start = ujs.find('{', func_start)
     if brace_start < 0:
-        t.fail("无法定位 _extractMethod 函数体开始")
+        t.fail("无法定位 extractMethodName 函数体开始")
         return
-    # 从 brace_start 开始，手动匹配大括号
     depth = 0
     func_end = brace_start
-    for i in range(brace_start, len(js)):
-        if js[i] == '{':
+    for i in range(brace_start, len(ujs)):
+        if ujs[i] == '{':
             depth += 1
-        elif js[i] == '}':
+        elif ujs[i] == '}':
             depth -= 1
             if depth == 0:
                 func_end = i + 1
                 break
-    func_body = js[brace_start + 1:func_end - 1].strip()
+    func_body = ujs[brace_start + 1:func_end - 1].strip()
+
+    # 验证 _extractMethod 委托给 Utils.extractMethodName
+    if 'Utils.extractMethodName' in js:
+        t.ok("_extractMethod 委托 Utils.extractMethodName")
+    else:
+        t.fail("_extractMethod 未委托 Utils.extractMethodName")
 
     # 用 Node.js 执行测试
     test_code = """
 function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-const _extractMethod = function(entry) {
+const Utils = { extractMethodName: function(src) {
 %s
-};
+} };
+const _extractMethod = function(entry) { return Utils.extractMethodName(entry.source); };
 const cases = [
   // [source, expected]
   ['', '(unknown)'],
@@ -1009,3 +1025,496 @@ def _(t, flags):
         t.ok("$ 末行跳转显示视图/全部统计")
     else:
         t.fail("$ 末行跳转缺少统计信息")
+
+
+@suite.test("时间线 tooltip 移出面板避免裁剪")
+def _(t, flags):
+    """验证 tooltip 元素位于时间线面板之外，避免被 overflow:hidden 裁剪"""
+    html_path = os.path.join(ROOT, 'index.html')
+    html = open(html_path, encoding='utf-8').read()
+
+    # 检查 tooltip 不在 timeline-panel 内部
+    panel_start = html.find('<div id="timeline-panel"')
+    panel_end = html.find('</div>', html.find('<canvas id="timeline-canvas"')) + 6
+    if panel_start >= 0 and panel_end > panel_start:
+        inner = html[panel_start:panel_end]
+        if 'timeline-tooltip' not in inner:
+            t.ok("tooltip 已移出 timeline-panel")
+        else:
+            t.fail("tooltip 仍在 timeline-panel 内部")
+    else:
+        t.fail("无法定位 timeline-panel")
+
+
+@suite.test("tooltip z-index 高于遮罩层")
+def _(t, flags):
+    """验证 tooltip z-index 高于 popup-overlay(2001)，保证最顶层显示"""
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    css = open(css_path, encoding='utf-8').read()
+
+    if '#timeline-tooltip' not in css:
+        t.fail("缺少 #timeline-tooltip 样式")
+        return
+
+    if 'z-index: 3000' in css:
+        t.ok("tooltip z-index 3000 > 遮罩层 2001")
+    else:
+        t.fail("tooltip z-index 未提升到 3000")
+
+
+@suite.test("tooltip 视口边界翻转逻辑")
+def _(t, flags):
+    """验证两个时间线模块都有 _positionTooltip 边界翻转"""
+    tl_path = os.path.join(ROOT, 'js', 'timeline.js')
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tl_js = open(tl_path, encoding='utf-8').read()
+    tt_js = open(tt_path, encoding='utf-8').read()
+
+    for name, js in (('timeline.js', tl_js), ('thread_timeline.js', tt_js)):
+        if '_positionTooltip' in js:
+            t.ok(f"{name} 包含 _positionTooltip")
+        else:
+            t.fail(f"{name} 缺少 _positionTooltip")
+        if 'e.clientX - tw - MARGIN' in js:
+            t.ok(f"{name} 支持右侧边界翻转")
+        else:
+            t.fail(f"{name} 缺少右侧边界翻转")
+        if 'vh - th - 8' in js:
+            t.ok(f"{name} 支持底部边界上移")
+        else:
+            t.fail(f"{name} 缺少底部边界上移")
+
+
+@suite.test("关闭时间线时隐藏 tooltip")
+def _(t, flags):
+    """验证关闭时间线面板时会隐藏 tooltip 避免残留"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if js.count('timeline-tooltip') >= 2 and 'tip.style.display = \'none\'' in js:
+        t.ok("关闭时间线时隐藏 tooltip")
+    else:
+        t.fail("关闭时间线时未隐藏 tooltip")
+
+
+@suite.test("时间线联动-定位当前行按钮")
+def _(t, flags):
+    """验证时间线头部有 '定位当前行' 按钮且已绑定事件"""
+    html_path = os.path.join(ROOT, 'index.html')
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    html = open(html_path, encoding='utf-8').read()
+    app_js = open(app_path, encoding='utf-8').read()
+
+    if 'btn-timeline-locate' in html:
+        t.ok("时间线头部包含定位按钮")
+    else:
+        t.fail("缺少 btn-timeline-locate 按钮")
+
+    if 'btn-timeline-locate' in app_js and 'locateInTimeline(entry)' in app_js:
+        t.ok("定位按钮已绑定 locateInTimeline")
+    else:
+        t.fail("定位按钮未绑定 locateInTimeline")
+
+
+@suite.test("时间线联动-closeTimelinePanel")
+def _(t, flags):
+    """验证 app.js 有 closeTimelinePanel 方法"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if 'closeTimelinePanel()' in js and 'timeline-tooltip' in js:
+        t.ok("closeTimelinePanel 方法存在且隐藏 tooltip")
+    else:
+        t.fail("缺少 closeTimelinePanel 方法")
+
+
+@suite.test("时间线联动-syncTimelineSelection")
+def _(t, flags):
+    """验证网格选中行 → 时间线标记同步逻辑"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if 'syncTimelineSelection()' in js and 'updateCurrentRow' in js:
+        t.ok("syncTimelineSelection 方法存在")
+    else:
+        t.fail("缺少 syncTimelineSelection 方法")
+
+    # 验证在 updateCurrentRow 中被调用
+    idx = js.find('updateCurrentRow() {')
+    if idx >= 0:
+        # 在方法体内查找 syncTimelineSelection 调用
+        body = js[idx:idx + 1200]
+        if 'this.syncTimelineSelection()' in body:
+            t.ok("updateCurrentRow 中同步时间线标记")
+        else:
+            t.fail("updateCurrentRow 未调用 syncTimelineSelection")
+    else:
+        t.fail("无法定位 updateCurrentRow")
+
+
+@suite.test("时间线联动-点击条目跳转且不关闭面板")
+def _(t, flags):
+    """验证两个时间线点击条目后跳转日志，但面板保留（函数/方法视图不被掩盖）"""
+    tl_path = os.path.join(ROOT, 'js', 'timeline.js')
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tl_js = open(tl_path, encoding='utf-8').read()
+    tt_js = open(tt_path, encoding='utf-8').read()
+
+    for name, js in (('timeline.js', tl_js), ('thread_timeline.js', tt_js)):
+        if 'LogGrid.scrollToEntry(this.hoveredEntry)' in js:
+            t.ok(f"{name} 点击条目跳转日志")
+        else:
+            t.fail(f"{name} 点击条目未跳转日志")
+        if 'App.closeTimelinePanel()' not in js:
+            t.ok(f"{name} 点击条目不关闭面板（保留函数视图）")
+        else:
+            t.fail(f"{name} 点击条目仍关闭面板")
+        if '已定位到日志第' in js:
+            t.ok(f"{name} 跳转后显示提示")
+        else:
+            t.fail(f"{name} 跳转后缺少提示")
+
+
+@suite.test("时间线面板右侧停靠非模态")
+def _(t, flags):
+    """验证时间线面板右侧停靠且无模态遮罩"""
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    css = open(css_path, encoding='utf-8').read()
+    app_js = open(app_path, encoding='utf-8').read()
+
+    # CSS：右侧停靠
+    if '#timeline-panel {' in css and 'right: 0' in css and 'transform: none' in css:
+        t.ok("时间线面板右侧停靠")
+    else:
+        t.fail("时间线面板未右侧停靠")
+
+    # app.js：打开面板不再显示模态遮罩
+    idx = app_js.find('toggleTimelinePanel(locateEntry) {')
+    if idx >= 0:
+        body = app_js[idx:idx + 800]
+        if 'Utils.showOverlay()' not in body:
+            t.ok("时间线面板非模态（无遮罩）")
+        else:
+            t.fail("时间线面板仍显示遮罩")
+    else:
+        t.fail("无法定位 toggleTimelinePanel")
+
+
+@suite.test("时间线联动-选中标记绘制")
+def _(t, flags):
+    """验证两个时间线都有选中行标记绘制逻辑"""
+    tl_path = os.path.join(ROOT, 'js', 'timeline.js')
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tl_js = open(tl_path, encoding='utf-8').read()
+    tt_js = open(tt_path, encoding='utf-8').read()
+
+    if '_selectedEntry' in tl_js and 'setSelectedEntry' in tl_js and 'locateEntry' in tl_js:
+        t.ok("timeline.js 包含选中标记与定位方法")
+    else:
+        t.fail("timeline.js 缺少选中标记/定位方法")
+
+    if '_selectedEntry' in tt_js and 'setSelectedEntry' in tt_js and 'locateEntry' in tt_js:
+        t.ok("thread_timeline.js 包含选中标记与定位方法")
+    else:
+        t.fail("thread_timeline.js 缺少选中标记/定位方法")
+
+    if '_drawSelectedMarker' in tt_js:
+        t.ok("thread_timeline.js 绘制选中标记")
+    else:
+        t.fail("thread_timeline.js 缺少 _drawSelectedMarker")
+
+
+@suite.test("时间线联动-tooltip 操作提示")
+def _(t, flags):
+    """验证 tooltip 有 '点击定位到左侧日志表格' 提示"""
+    tl_path = os.path.join(ROOT, 'js', 'timeline.js')
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tl_js = open(tl_path, encoding='utf-8').read()
+    tt_js = open(tt_path, encoding='utf-8').read()
+
+    if '点击定位到左侧日志表格' in tl_js:
+        t.ok("timeline.js tooltip 有操作提示")
+    else:
+        t.fail("timeline.js tooltip 缺少操作提示")
+
+    if '点击定位到左侧日志表格' in tt_js:
+        t.ok("thread_timeline.js tooltip 有操作提示")
+    else:
+        t.fail("thread_timeline.js tooltip 缺少操作提示")
+
+
+@suite.test("时间线-label 列宽度拖拽")
+def _(t, flags):
+    """验证 source/label 列支持拖动宽度调整"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    if '_labelResizing' in js and '_labelDragStartW' in js:
+        t.ok("包含 label 列拖拽状态")
+    else:
+        t.fail("缺少 label 列拖拽状态")
+
+    if 'tl-label-width' in js:
+        t.ok("label 宽度持久化到 localStorage")
+    else:
+        t.fail("label 宽度未持久化")
+
+    if 'col-resize' in js:
+        t.ok("label 边界显示拖拽光标")
+    else:
+        t.fail("label 边界缺少拖拽光标")
+
+    if '_precomputedPlotW = 0' in js and 'Math.max(90, Math.min(320' in js:
+        t.ok("拖拽时重算位置并限制宽度范围")
+    else:
+        t.fail("缺少宽度限制或重算逻辑")
+
+
+@suite.test("时间线-面板宽度拖拽")
+def _(t, flags):
+    """验证时间线面板支持拖动宽度并持久化"""
+    html_path = os.path.join(ROOT, 'index.html')
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    html = open(html_path, encoding='utf-8').read()
+    app_js = open(app_path, encoding='utf-8').read()
+    css = open(css_path, encoding='utf-8').read()
+
+    if 'timeline-resizer' in html:
+        t.ok("包含面板宽度手柄")
+    else:
+        t.fail("缺少 timeline-resizer")
+
+    if 'tl-panel-width' in app_js:
+        t.ok("面板宽度持久化到 localStorage")
+    else:
+        t.fail("面板宽度未持久化")
+
+    if 'col-resize' in css and '#timeline-resizer' in css:
+        t.ok("手柄样式定义")
+    else:
+        t.fail("缺少手柄样式")
+
+    if 'Math.max(400' in app_js:
+        t.ok("宽度有最小限制")
+    else:
+        t.fail("缺少宽度限制")
+
+
+@suite.test("时间线-最小化与悬浮按钮")
+def _(t, flags):
+    """验证最小化保留视图状态、悬浮按钮恢复、点关闭才真正关闭"""
+    html_path = os.path.join(ROOT, 'index.html')
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    html = open(html_path, encoding='utf-8').read()
+    app_js = open(app_path, encoding='utf-8').read()
+    css = open(css_path, encoding='utf-8').read()
+
+    if 'btn-timeline-minimize' in html:
+        t.ok("包含最小化按钮")
+    else:
+        t.fail("缺少最小化按钮")
+
+    if 'timeline-minimized-btn' in html:
+        t.ok("包含悬浮恢复按钮")
+    else:
+        t.fail("缺少悬浮按钮")
+
+    if 'minimizeTimelinePanel()' in app_js and 'restoreTimelinePanel()' in app_js:
+        t.ok("包含最小化/恢复方法")
+    else:
+        t.fail("缺少最小化/恢复方法")
+
+    if '_timelineMinimized' in app_js:
+        t.ok("跟踪最小化状态")
+    else:
+        t.fail("缺少最小化状态标志")
+
+    if 'timeline-minimized-btn' in css and 'position: fixed' in css:
+        t.ok("悬浮按钮样式定义")
+    else:
+        t.fail("缺少悬浮按钮样式")
+
+
+@suite.test("时间线-日期维度时间轴")
+def _(t, flags):
+    """验证时间轴跨天时显示日期维度（午夜分隔线 + 日期标签）"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tl_path = os.path.join(ROOT, 'js', 'timeline.js')
+    tt_js = open(tt_path, encoding='utf-8').read()
+    tl_js = open(tl_path, encoding='utf-8').read()
+
+    for name, js in (('thread_timeline.js', tt_js), ('timeline.js', tl_js)):
+        if '86400000' in js and 'MM-dd' in js:
+            t.ok(f"{name} 包含日期维度时间轴逻辑")
+        else:
+            t.fail(f"{name} 缺少日期维度逻辑")
+        if 'setLineDash' in js or 'MM-dd HH:mm' in js or 'firstMidnight' in js:
+            t.ok(f"{name} 跨天午夜分隔/日期标签")
+        else:
+            t.fail(f"{name} 缺少午夜分隔或日期标签")
+        if 'HH:mm:ss' in js:
+            t.ok(f"{name} 保留时钟格式回退")
+        else:
+            t.fail(f"{name} 缺少时钟格式")
+
+
+@suite.test("时间线-仅重绘激活模式")
+def _(t, flags):
+    """验证 _resizeActiveTimeline 只重绘当前激活模式，避免共用 canvas 互相覆盖"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if '_resizeActiveTimeline()' in js:
+        t.ok("包含 _resizeActiveTimeline 方法")
+    else:
+        t.fail("缺少 _resizeActiveTimeline 方法")
+
+    # 不应同时调用两个 resize
+    if js.count('ThreadTimeline.resize();\n        Timeline.resize()') == 0:
+        t.ok("不再同时重绘两个模式")
+    else:
+        t.fail("仍同时重绘两个模式，可能互相覆盖")
+
+
+@suite.test("过滤-线程匹配 thread 或 tid")
+def _(t, flags):
+    """验证 threadFilter 同时匹配 thread 和 tid，避免时间线点击后背景日志为空"""
+    filter_path = os.path.join(ROOT, 'js', 'filter.js')
+    js = open(filter_path, encoding='utf-8').read()
+
+    if 'threadRe.test(e.thread)' in js and 'threadRe.test(e.tid)' in js:
+        t.ok("线程过滤同时匹配 thread 和 tid")
+    else:
+        t.fail("线程过滤未匹配 tid")
+
+
+@suite.test("过滤-方法名精确过滤")
+def _(t, flags):
+    """验证 methodFilter 按提取的方法名精确匹配（解决 source 格式差异导致空日志）"""
+    filter_path = os.path.join(ROOT, 'js', 'filter.js')
+    utils_path = os.path.join(ROOT, 'js', 'utils.js')
+    js = open(filter_path, encoding='utf-8').read()
+    ujs = open(utils_path, encoding='utf-8').read()
+
+    if 'methodFilter' in js and 'methodFilter: \'\'' in js:
+        t.ok("filter.js 包含 methodFilter 状态")
+    else:
+        t.fail("filter.js 缺少 methodFilter 状态")
+
+    if 'Utils.extractMethodName(e.source)' in js:
+        t.ok("apply() 使用 Utils.extractMethodName 匹配方法")
+    else:
+        t.fail("apply() 未使用方法名匹配")
+
+    if 'extractMethodName' in ujs:
+        t.ok("Utils.extractMethodName 已提取到公共工具")
+    else:
+        t.fail("缺少 Utils.extractMethodName")
+
+
+@suite.test("时间线-点击联动过滤同步")
+def _(t, flags):
+    """验证时间线点击/进入详情/PID选择 会同步背景日志过滤"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    if 'LogFilter.state.methodFilter = name' in js:
+        t.ok("点击方法标签设置 methodFilter")
+    else:
+        t.fail("点击方法标签未设置 methodFilter")
+
+    if 'LogFilter.state.threadFilter = Utils.escapeRegex(threadName)' in js:
+        t.ok("进入线程详情同步 threadFilter")
+    else:
+        t.fail("进入线程详情未同步 threadFilter")
+
+    if 'LogFilter.state.pidFilter !== pid' in js:
+        t.ok("PID 选择同步 pidFilter 到网格")
+    else:
+        t.fail("PID 选择未同步网格")
+
+
+@suite.test("时间线-关闭时恢复过滤状态")
+def _(t, flags):
+    """验证关闭时间线面板时恢复打开前的网格过滤状态"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    if '_tlFilterBackup' in js:
+        t.ok("打开时间线时备份过滤状态")
+    else:
+        t.fail("缺少过滤状态备份")
+
+    if 'Object.assign(LogFilter.state, this._tlFilterBackup)' in js:
+        t.ok("关闭时间线时恢复过滤状态")
+    else:
+        t.fail("关闭时未恢复过滤状态")
+
+
+@suite.test("时间线-主题适配")
+def _(t, flags):
+    """验证时间线画布跟随明暗主题（使用 CSS 变量）"""
+    utils_path = os.path.join(ROOT, 'js', 'utils.js')
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tl_path = os.path.join(ROOT, 'js', 'timeline.js')
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    ujs = open(utils_path, encoding='utf-8').read()
+    tt_js = open(tt_path, encoding='utf-8').read()
+    tl_js = open(tl_path, encoding='utf-8').read()
+    app_js = open(app_path, encoding='utf-8').read()
+
+    if 'getCSSVar' in ujs:
+        t.ok("Utils.getCSSVar 读取主题变量")
+    else:
+        t.fail("缺少 Utils.getCSSVar")
+
+    for name, js in (('thread_timeline.js', tt_js), ('timeline.js', tl_js)):
+        if '_refreshTheme' in js and '_tc' in js and 'onThemeChange' in js:
+            t.ok(f"{name} 包含主题刷新与重绘")
+        else:
+            t.fail(f"{name} 缺少主题刷新机制")
+
+    if '--levelColors' in tt_js or '_levelColors' in tt_js:
+        t.ok("thread_timeline 级别颜色主题化")
+    else:
+        t.fail("thread_timeline 级别颜色未主题化")
+
+    if '_levelColors' in tl_js and 'getLevelColor' in tl_js:
+        t.ok("timeline.js 级别颜色主题化")
+    else:
+        t.fail("timeline.js 级别颜色未主题化")
+
+    if 'ThreadTimeline.onThemeChange()' in app_js and 'Timeline.onThemeChange()' in app_js:
+        t.ok("主题切换触发时间线重绘")
+    else:
+        t.fail("主题切换未通知时间线")
+
+
+@suite.test("时间线-label 列拖拽手柄")
+def _(t, flags):
+    """验证 label 列宽度拖拽的可见手柄与防误触"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    if '_drawLabelResizeHandle' in js:
+        t.ok("绘制可见的拖拽手柄")
+    else:
+        t.fail("缺少拖拽手柄绘制")
+
+    if '_suppressClick' in js:
+        t.ok("拖拽结束抑制误触 click")
+    else:
+        t.fail("缺少防误触标志")
+
+    if 'Math.abs(x - this.LABEL_WIDTH) <= 8' in js:
+        t.ok("拖拽热区扩大至 8px")
+    else:
+        t.fail("拖拽热区未扩大")
+
+    if '重置 label 列宽' in js:
+        t.ok("双击边界重置列宽")
+    else:
+        t.fail("缺少双击重置列宽")

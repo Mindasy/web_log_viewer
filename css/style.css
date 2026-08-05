@@ -1280,6 +1280,77 @@ html, body {
   font-size: 11px;
 }
 .timeline-controls button:hover { background: var(--bg-hover); }
+
+/* 时间线面板：右侧停靠（非模态），保留左侧日志表格可交互 */
+#timeline-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: auto;
+  transform: none;
+  width: min(72vw, 1200px);
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  overflow: visible;
+  z-index: 1500;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+  animation: slideInRight 0.25s ease;
+}
+#timeline-panel .popup-header {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 12px;
+}
+@keyframes slideInRight {
+  from { transform: translateX(40px); opacity: 0.4; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* 时间线面板宽度拖拽手柄（面板左边缘） */
+#timeline-resizer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2000;
+  display: none;
+}
+#timeline-resizer.tl-visible {
+  display: block;
+}
+#timeline-resizer:hover,
+#timeline-resizer.tl-dragging {
+  background: rgba(122, 162, 247, 0.25);
+}
+
+/* 时间线最小化后的悬浮按钮 */
+#timeline-minimized-btn {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 3000;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 22px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+  opacity: 0.95;
+}
+#timeline-minimized-btn:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
 #timeline-tooltip {
   position: fixed;
   background: var(--bg-surface);
@@ -1288,8 +1359,9 @@ html, body {
   border-radius: var(--radius);
   font-size: 11px;
   pointer-events: none;
-  z-index: 1001;
+  z-index: 3000;
   box-shadow: var(--shadow);
+  max-width: 420px;
 }
 
 /* Timeline mode tabs */
@@ -3301,4 +3373,5 @@ html, body {
   .col-pid, .col-tid, .col-source { display: none; }
   #detail-panel.expanded { width: 280px; min-width: 280px; }
   .wide-popup { width: 95vw !important; }
+  #timeline-panel { width: 100vw; }
 }

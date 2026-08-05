@@ -26,8 +26,10 @@ const App = {
     ThreadTimeline.init();
     // 窗口大小变化时重绘时间线
     window.addEventListener('resize', Utils.debounce(() => {
-      ThreadTimeline.resize();
-      Timeline.resize();
+      this._resizeActiveTimeline();
+      // 重定位时间线面板宽度手柄
+      const panel = document.getElementById('timeline-panel');
+      if (panel && panel.style.display !== 'none') this._showTimelineResizer();
     }, 150));
     // 首次启动：将内置预设 Pattern 写入 DB
     await this.seedPresetPatterns();
@@ -65,6 +67,9 @@ const App = {
       document.getElementById('btn-theme-toggle').textContent = '🌙 主题';
       localStorage.setItem('logviewer-theme', 'dark');
     }
+    // 时间线画布跟随主题重绘
+    if (ThreadTimeline) ThreadTimeline.onThemeChange();
+    if (Timeline) Timeline.onThemeChange();
   },
 
   // 首次启动时将内置预设 Pattern 写入数据库
@@ -603,9 +608,59 @@ const App = {
 
     // 时间线面板
     document.getElementById('btn-close-timeline').addEventListener('click', () => {
-      document.getElementById('timeline-panel').style.display = 'none';
-      Utils.hideOverlay();
+      this.closeTimelinePanel();
     });
+
+    // 时间线：定位当前选中行
+    document.getElementById('btn-timeline-locate').addEventListener('click', () => {
+      const entry = (LogGrid.selectedIndex >= 0) ? LogGrid.entries[LogGrid.selectedIndex] : null;
+      if (!entry) {
+        Utils.showToast('请先在日志表格中选择一行', 'error');
+        return;
+      }
+      this.locateInTimeline(entry);
+    });
+
+    // 时间线：最小化（保留视图状态）
+    document.getElementById('btn-timeline-minimize').addEventListener('click', () => {
+      this.minimizeTimelinePanel();
+    });
+
+    // 时间线：悬浮按钮恢复
+    document.getElementById('timeline-minimized-btn').addEventListener('click', () => {
+      this.restoreTimelinePanel();
+    });
+
+    // 时间线面板：宽度拖拽调整
+    const tlPanel = document.getElementById('timeline-panel');
+    const tlResizer = document.getElementById('timeline-resizer');
+    if (tlPanel && tlResizer) {
+      let tlResizing = false, tlStartX = 0, tlStartW = 0;
+      tlResizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        tlResizing = true;
+        tlStartX = e.clientX;
+        tlStartW = tlPanel.getBoundingClientRect().width;
+        tlResizer.classList.add('tl-dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (!tlResizing) return;
+        const w = Math.max(400, Math.min(window.innerWidth, tlStartW + (tlStartX - e.clientX)));
+        tlPanel.style.width = w + 'px';
+        tlResizer.style.left = (window.innerWidth - w - 3) + 'px';
+      });
+      window.addEventListener('mouseup', () => {
+        if (!tlResizing) return;
+        tlResizing = false;
+        tlResizer.classList.remove('tl-dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('tl-panel-width', tlPanel.style.width);
+        this._resizeActiveTimeline();
+      });
+    }
 
     // 高亮设置面板
     document.getElementById('btn-close-highlight-settings').addEventListener('click', () => {
@@ -1211,6 +1266,9 @@ const App = {
     } else {
       panel.style.display = 'none';
       Utils.hideOverlay();
+      // 关闭时隐藏 tooltip，避免残留
+      const tip = document.getElementById('timeline-tooltip');
+      if (tip) tip.style.display = 'none';
     }
   },
 
@@ -1309,11 +1367,32 @@ const App = {
   },
 
   // ===== 时间线面板 =====
-  toggleTimelinePanel() {
+  toggleTimelinePanel(locateEntry) {
     const panel = document.getElementById('timeline-panel');
     if (panel.style.display === 'none') {
+      // 最小化状态下恢复：保留视图状态，不重新初始化
+      if (this._timelineMinimized) {
+        this.restoreTimelinePanel();
+        if (locateEntry) this.locateInTimeline(locateEntry);
+        return;
+      }
+      // 全新打开：备份网格过滤状态，关闭时恢复
+      if (!this._tlFilterBackup) {
+        this._tlFilterBackup = {
+          pidFilter: LogFilter.state.pidFilter,
+          threadFilter: LogFilter.state.threadFilter,
+          sourceFilter: LogFilter.state.sourceFilter,
+          methodFilter: LogFilter.state.methodFilter,
+        };
+      }
       panel.style.display = 'flex';
-      Utils.showOverlay();
+      // 恢复用户自定义的面板宽度
+      const savedW = localStorage.getItem('tl-panel-width');
+      if (savedW) {
+        const num = parseInt(savedW, 10);
+        if (num >= 400 && num <= window.innerWidth) panel.style.width = num + 'px';
+      }
+      // 非模态停靠：不显示遮罩，左侧日志表格保持可交互
       // 填充 PID 下拉
       ThreadTimeline._populatePidSelect();
       // 延迟设置canvas尺寸
@@ -1325,14 +1404,113 @@ const App = {
         const activeMode = document.querySelector('.timeline-mode-btn.active');
         if (activeMode && activeMode.dataset.mode === 'thread') {
           ThreadTimeline._refreshFromPidSelect();
+          if (locateEntry) ThreadTimeline.locateEntry(locateEntry);
         } else {
           Timeline.show(LogParser.entries);
+          if (locateEntry) Timeline.locateEntry(locateEntry);
         }
+        // 同步当前网格选中行到时间线
+        this.syncTimelineSelection();
       }, 50);
+      this._showTimelineResizer();
     } else {
-      panel.style.display = 'none';
-      Utils.hideOverlay();
+      this.closeTimelinePanel();
     }
+  },
+
+  // 关闭时间线面板（真正关闭：下次打开重新初始化）
+  closeTimelinePanel() {
+    document.getElementById('timeline-panel').style.display = 'none';
+    this._timelineMinimized = false;
+    this._hideTimelineResizer();
+    const tip = document.getElementById('timeline-tooltip');
+    if (tip) tip.style.display = 'none';
+    const fb = document.getElementById('timeline-minimized-btn');
+    if (fb) fb.style.display = 'none';
+    // 恢复打开时间线前的网格过滤状态
+    if (this._tlFilterBackup) {
+      Object.assign(LogFilter.state, this._tlFilterBackup);
+      this._tlFilterBackup = null;
+      if (App && App.refresh) App.refresh();
+    }
+  },
+
+  // 最小化时间线：隐藏面板，显示悬浮按钮，保留视图状态
+  minimizeTimelinePanel() {
+    document.getElementById('timeline-panel').style.display = 'none';
+    this._timelineMinimized = true;
+    this._hideTimelineResizer();
+    const tip = document.getElementById('timeline-tooltip');
+    if (tip) tip.style.display = 'none';
+    const fb = document.getElementById('timeline-minimized-btn');
+    if (fb) fb.style.display = 'block';
+  },
+
+  // 从最小化状态恢复：不重置视图
+  restoreTimelinePanel() {
+    const panel = document.getElementById('timeline-panel');
+    panel.style.display = 'flex';
+    // 恢复用户自定义的面板宽度
+    const savedW = localStorage.getItem('tl-panel-width');
+    if (savedW) {
+      const num = parseInt(savedW, 10);
+      if (num >= 400 && num <= window.innerWidth) panel.style.width = num + 'px';
+    }
+    this._timelineMinimized = false;
+    const fb = document.getElementById('timeline-minimized-btn');
+    if (fb) fb.style.display = 'none';
+    this._showTimelineResizer();
+    // 仅重绘，不重新初始化
+    setTimeout(() => {
+      this._resizeActiveTimeline();
+      this.syncTimelineSelection();
+    }, 30);
+  },
+
+  _showTimelineResizer() {
+    const resizer = document.getElementById('timeline-resizer');
+    if (!resizer) return;
+    const panel = document.getElementById('timeline-panel');
+    const pw = panel.getBoundingClientRect().width;
+    resizer.style.left = (window.innerWidth - pw - 3) + 'px';
+    resizer.classList.add('tl-visible');
+  },
+
+  _hideTimelineResizer() {
+    const resizer = document.getElementById('timeline-resizer');
+    if (resizer) resizer.classList.remove('tl-visible');
+  },
+
+  // 仅重绘当前激活的时间线模式（线程/级别共用同一 canvas，避免互相覆盖）
+  _resizeActiveTimeline() {
+    const activeMode = document.querySelector('.timeline-mode-btn.active');
+    if (activeMode && activeMode.dataset.mode === 'thread') ThreadTimeline.resize();
+    else Timeline.resize();
+  },
+
+  // 将当前网格选中行同步到时间线标记
+  syncTimelineSelection() {
+    const panel = document.getElementById('timeline-panel');
+    if (!panel || panel.style.display === 'none') return;
+    const entry = (LogGrid.selectedIndex >= 0) ? LogGrid.entries[LogGrid.selectedIndex] : null;
+    const activeMode = document.querySelector('.timeline-mode-btn.active');
+    const isThread = activeMode && activeMode.dataset.mode === 'thread';
+    if (isThread) ThreadTimeline.setSelectedEntry(entry);
+    else Timeline.setSelectedEntry(entry);
+  },
+
+  // 在时间线中定位指定条目（自动打开面板并居中标记）
+  locateInTimeline(entry) {
+    if (!entry) return;
+    const panel = document.getElementById('timeline-panel');
+    if (panel && panel.style.display === 'none') {
+      this.toggleTimelinePanel(entry);
+      return;
+    }
+    const activeMode = document.querySelector('.timeline-mode-btn.active');
+    const isThread = activeMode && activeMode.dataset.mode === 'thread';
+    if (isThread) ThreadTimeline.locateEntry(entry);
+    else Timeline.locateEntry(entry);
   },
 
   // ===== 解析器配置 =====
@@ -1764,6 +1942,8 @@ const App = {
       suffix.textContent = hasView && LogGrid.totalRows !== globalTotal
         ? ` (全部 ${globalTotal})` : '';
     }
+    // 时间线面板打开时，同步选中行标记
+    this.syncTimelineSelection();
   },
 
   // ===== 更新文件信息 =====

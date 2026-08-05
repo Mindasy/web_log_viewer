@@ -4,6 +4,55 @@ const APP_VERSION = '1.0.0';
 const APP_RELEASE_TIME = '1971/01/01 00:00:00';
 
 const Utils = {
+  // 读取 CSS 自定义属性（Canvas 绘制使用，跟随主题）
+  _computedStyle: null,
+  getCSSVar(name) {
+    if (!this._computedStyle) {
+      this._computedStyle = getComputedStyle(document.documentElement);
+    }
+    return this._computedStyle.getPropertyValue(name).trim();
+  },
+
+  // 从 source 提取方法名（与 thread_timeline 的方法时间线保持一致）
+  extractMethodName(src) {
+    if (!src) return '(unknown)';
+    // file:func:linenum 格式，如 "com.example.Service:handle:42" 或 "test.cpp:testFunc:1000"
+    if (src.includes(':')) {
+      const parts = src.split(':');
+      const filePart = parts[0] || '';
+      const funcPart = parts[1] || '';
+      let className;
+      if (filePart.includes('/')) {
+        // 文件路径格式如 "src/utils/helper.go" → 取文件名（不含扩展名）
+        const pathParts = filePart.split('/');
+        const fileName = pathParts[pathParts.length - 1];
+        const dotIdx = fileName.lastIndexOf('.');
+        className = dotIdx > 0 ? fileName.substring(0, dotIdx) : fileName;
+      } else {
+        const dotParts = filePart.split('.');
+        if (dotParts.length === 2) {
+          // 两段如 "test.cpp" → 取文件名（不含扩展名）
+          className = dotParts[0];
+        } else if (dotParts.length >= 3) {
+          // 三段以上如 "com.example.Service" → 取最后一段（类名）
+          className = dotParts[dotParts.length - 1];
+        } else {
+          className = filePart;
+        }
+      }
+      if (funcPart) return className + '.' + funcPart;
+      return className;
+    }
+    // 点号格式，如 "com.example.Service.methodName"
+    const parts = src.split('.');
+    if (parts.length >= 4) {
+      // 4段以上：取最后两段作为 "类名.方法名"
+      return parts.slice(-2).join('.');
+    }
+    // 3段以下：取最后一段（类名或简单名称）
+    return parts[parts.length - 1];
+  },
+
   // 格式化字节数
   formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -121,6 +170,16 @@ const Utils = {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     });
+    // 清理时间线面板的配套元素（宽度手柄 / 悬浮按钮）
+    const tlResizer = document.getElementById('timeline-resizer');
+    if (tlResizer) tlResizer.classList.remove('tl-visible');
+    const fb = document.getElementById('timeline-minimized-btn');
+    if (fb) fb.style.display = 'none';
+    // 若时间线被整体关闭，恢复其打开前的网格过滤状态
+    const tlPanel = document.getElementById('timeline-panel');
+    if (tlPanel && tlPanel.style.display === 'none' && typeof App !== 'undefined' && App.closeTimelinePanel) {
+      App.closeTimelinePanel();
+    }
   },
 
   // 下载文件
