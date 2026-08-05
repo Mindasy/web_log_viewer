@@ -14,6 +14,7 @@ const ThreadTimeline = {
   dragging: false, dragStartX: 0, dragStartY: 0,
   dragStartOffset: 0, dragStartScrollY: 0,
   hoveredEntry: null,
+  _selectedEntry: null,        // 当前网格选中行（联动标记）
 
   // 线程详情模式
   _detailThread: null,         // 当前查看详情的线程名
@@ -43,8 +44,43 @@ const ThreadTimeline = {
     this.ctx = this.canvas.getContext('2d');
     this.tooltip = document.getElementById('timeline-tooltip');
     this._dpr = window.devicePixelRatio || 1;
+    // 恢复用户自定义的 label 列宽度
+    const savedLabelW = parseInt(localStorage.getItem('tl-label-width'), 10);
+    if (savedLabelW >= 90 && savedLabelW <= 320) this.LABEL_WIDTH = savedLabelW;
+    this._refreshTheme();
     this._bindCanvasEvents();
     this._bindHeaderEvents();
+  },
+
+  // ===== 主题适配 =====
+
+  // 读取主题色（Canvas 无法直接使用 CSS var()，需手动解析）
+  _refreshTheme() {
+    const g = name => Utils.getCSSVar(name) || '';
+    this._tc = {
+      bg: g('--bg-primary') || '#11121a',
+      bgLabel: g('--bg-tertiary') || '#161822',
+      bgAlt: g('--bg-secondary') || '#141520',
+      border: g('--border-color') || '#252636',
+      borderSoft: g('--scrollbar-thumb') || '#1e2030',
+      text: g('--text-primary') || '#a6adc8',
+      textMuted: g('--text-muted') || '#6c7086',
+      accent: g('--accent') || '#7aa2f7',
+    };
+    this._levelColors = {
+      FATAL: g('--fatal') || '#eba0ac',
+      ERROR: g('--error') || '#f38ba8',
+      WARN: g('--warning') || '#f9e2af',
+      INFO: g('--info') || '#89dceb',
+      DEBUG: g('--debug') || '#94e2d5',
+      TRACE: g('--trace') || '#b4befe',
+    };
+  },
+
+  // 主题切换时重绘
+  onThemeChange() {
+    this._refreshTheme();
+    if (this.canvas) this._draw();
   },
 
   // ===== 数据准备 =====
@@ -148,10 +184,14 @@ const ThreadTimeline = {
     this._detailMethodSearch = '';
     // 清除之前的过滤条件，进入全新上下文
     LogFilter.state.sourceFilter = '';
+    LogFilter.state.methodFilter = '';
+    // 同步背景日志：只显示该线程的日志
+    LogFilter.state.threadFilter = Utils.escapeRegex(threadName);
     this._groupByMethod(thread.entries);
     this._clampScrollY();
     this._updateDetailHeader();
     this._draw();
+    App.refresh();
   },
 
   closeThreadDetail() {
@@ -162,6 +202,7 @@ const ThreadTimeline = {
     // 清除时间线触发的过滤条件，恢复 grid 显示全部数据
     LogFilter.state.threadFilter = '';
     LogFilter.state.sourceFilter = '';
+    LogFilter.state.methodFilter = '';
     this._updateDetailHeader();
     this._draw();
     App.refresh();
@@ -220,43 +261,7 @@ const ThreadTimeline = {
   },
 
   _extractMethod(entry) {
-    const src = entry.source || '';
-    if (!src) return '(unknown)';
-    // file:func:linenum 格式，如 "com.example.Service:handle:42" 或 "test.cpp:testFunc:1000"
-    if (src.includes(':')) {
-      const parts = src.split(':');
-      const filePart = parts[0] || '';
-      const funcPart = parts[1] || '';
-      let className;
-      if (filePart.includes('/')) {
-        // 文件路径格式如 "src/utils/helper.go" → 取文件名（不含扩展名）
-        const pathParts = filePart.split('/');
-        const fileName = pathParts[pathParts.length - 1];
-        const dotIdx = fileName.lastIndexOf('.');
-        className = dotIdx > 0 ? fileName.substring(0, dotIdx) : fileName;
-      } else {
-        const dotParts = filePart.split('.');
-        if (dotParts.length === 2) {
-          // 两段如 "test.cpp" → 取文件名（不含扩展名）
-          className = dotParts[0];
-        } else if (dotParts.length >= 3) {
-          // 三段以上如 "com.example.Service" → 取最后一段（类名）
-          className = dotParts[dotParts.length - 1];
-        } else {
-          className = filePart;
-        }
-      }
-      if (funcPart) return className + '.' + funcPart;
-      return className;
-    }
-    // 点号格式，如 "com.example.Service.methodName"
-    const parts = src.split('.');
-    if (parts.length >= 4) {
-      // 4段以上：取最后两段作为 "类名.方法名"
-      return parts.slice(-2).join('.');
-    }
-    // 3段以下：取最后一段（类名或简单名称）
-    return parts[parts.length - 1];
+    return Utils.extractMethodName(entry.source);
   },
 
   _updateDetailHeader() {
@@ -278,6 +283,46 @@ const ThreadTimeline = {
     this.offsetX = 0;
     this.scrollY = 0;
     this._draw();
+  },
+
+  // 设置联动标记（网格选中行 → 时间线高亮）
+  setSelectedEntry(entry) {
+    this._selectedEntry = entry || null;
+    this._draw();
+  },
+
+  // 在时间线中定位指定条目：滚动泳道 + 水平居中 + 标记
+  locateEntry(entry) {
+    if (!entry || !entry.date) return false;
+    this._selectedEntry = entry;
+    const sources = this._detailThread ? this._detailMethods : this.threads;
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    const lane = sources.find(s => s.entries.includes(entry));
+    if (!lane) {
+      this._draw();
+      return false;
+    }
+
+    // 垂直滚动到所在泳道
+    const idx = list.indexOf(lane.name);
+    if (idx >= 0) {
+      const viewH = this._getViewportH();
+      const laneTop = idx * this.SWIMLANE_H;
+      if (laneTop < this.scrollY || laneTop + this.SWIMLANE_H > this.scrollY + viewH) {
+        this.scrollY = Math.max(0, Math.min(laneTop - viewH / 2, this._getContentHeight() - viewH));
+      }
+    }
+
+    // 水平居中该条目的时间位置
+    const plotW = this._getPlotWidth();
+    if (plotW > 0) {
+      const t = (entry.date.getTime() - this.minTime) / this.timeRange;
+      const targetX = this.MARGIN.left + this.LABEL_WIDTH + t * plotW;
+      const cx = (this.canvas.width / this._dpr) / 2;
+      this.offsetX = cx - targetX * this.zoomLevel;
+    }
+    this._draw();
+    return true;
   },
 
   zoomIn(mx) {
@@ -317,9 +362,17 @@ const ThreadTimeline = {
   _bindCanvasEvents() {
     this.canvas.addEventListener('mousedown', e => this._onMD(e));
     this.canvas.addEventListener('mousemove', e => this._onMM(e));
-    this.canvas.addEventListener('mouseup', () => { this.dragging = false; });
+    this.canvas.addEventListener('mouseup', () => {
+      this.dragging = false;
+      if (this._labelResizing) {
+        this._labelResizing = false;
+        this._suppressClick = true;
+        localStorage.setItem('tl-label-width', String(this.LABEL_WIDTH));
+      }
+    });
     this.canvas.addEventListener('mouseleave', () => {
       this.dragging = false;
+      this._labelResizing = false;
       this._hoveredThreadIdx = -1;
       this.tooltip.style.display = 'none';
       this._draw();
@@ -349,20 +402,29 @@ const ThreadTimeline = {
       }
     });
     this.canvas.addEventListener('click', e => {
+      // 拖拽 label 列宽度刚结束 → 忽略本次 click，避免误触
+      if (this._suppressClick) {
+        this._suppressClick = false;
+        return;
+      }
       if (this.hoveredEntry) {
-        LogGrid.scrollToEntry(this.hoveredEntry);
+        // 点击条目 → 跳转到对应日志行（面板停靠保留，函数/方法视图不被掩盖）
+        if (LogGrid.scrollToEntry(this.hoveredEntry)) {
+          Utils.showToast(`已定位到日志第 ${this.hoveredEntry.index + 1} 行`, 'success', 2000);
+        }
         return;
       }
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
 
       if (this._detailThread) {
-        // 详情模式：点击方法标签 → 过滤
+        // 详情模式：点击方法标签 → 过滤（按方法名精确匹配，避免 source 格式差异）
         const mi = this._getItemIdx(y);
         if (mi >= 0 && x <= this.LABEL_WIDTH) {
           const name = this._detailVisibleMethods[mi];
           if (name && name !== '(unknown)') {
-            LogFilter.state.sourceFilter = Utils.escapeRegex(name);
+            LogFilter.state.methodFilter = name;
+            LogFilter.state.sourceFilter = '';
             App.refresh();
           }
         }
@@ -378,6 +440,8 @@ const ThreadTimeline = {
             // 双击或 Alt+点击 → 打开线程详情
             this.openThreadDetail(name);
           } else {
+            LogFilter.state.methodFilter = '';
+            LogFilter.state.sourceFilter = '';
             LogFilter.state.threadFilter = Utils.escapeRegex(name);
             App.refresh();
           }
@@ -385,10 +449,18 @@ const ThreadTimeline = {
       }
     });
 
-    // 双击进入线程详情
+    // 双击进入线程详情 / 双击 label 边界重置列宽
     this.canvas.addEventListener('dblclick', e => {
       const rect = this.canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
+      if (y >= this.MARGIN.top && Math.abs(x - this.LABEL_WIDTH) <= 8) {
+        // 双击边界 → 重置 label 列宽
+        this.LABEL_WIDTH = 160;
+        this._precomputedPlotW = 0;
+        localStorage.setItem('tl-label-width', String(this.LABEL_WIDTH));
+        this._draw();
+        return;
+      }
       if (this._detailThread) return;
       const ti = this._getItemIdx(y);
       if (ti >= 0 && x > this.LABEL_WIDTH) {
@@ -408,6 +480,16 @@ const ThreadTimeline = {
   },
 
   _onMD(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    // 点击 label 列边界 → 进入宽度拖拽
+    if (y >= this.MARGIN.top && Math.abs(x - this.LABEL_WIDTH) <= 8) {
+      this._labelResizing = true;
+      this._labelDragStartX = e.clientX;
+      this._labelDragStartW = this.LABEL_WIDTH;
+      this.canvas.style.cursor = 'col-resize';
+      return;
+    }
     this.dragging = true;
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
@@ -432,6 +514,31 @@ const ThreadTimeline = {
       return;
     }
 
+    // 拖拽 label 列宽度
+    if (this._labelResizing) {
+      const w = Math.max(90, Math.min(320,
+        this._labelDragStartW + (e.clientX - this._labelDragStartX)));
+      if (w !== this.LABEL_WIDTH) {
+        this.LABEL_WIDTH = w;
+        this._precomputedPlotW = 0;
+        this._draw();
+      }
+      return;
+    }
+
+    // 悬停在 label 列边界 → 显示拖拽光标
+    const nearLabelEdge = y >= this.MARGIN.top - 2 && Math.abs(x - this.LABEL_WIDTH) <= 8;
+    if (nearLabelEdge) {
+      this.canvas.style.cursor = 'col-resize';
+      this.tooltip.style.display = 'none';
+      this.hoveredEntry = null;
+      if (this._hoveredThreadIdx !== -1) {
+        this._hoveredThreadIdx = -1;
+        this._draw();
+      }
+      return;
+    }
+
     const ti = this._getItemIdx(y);
     const prevHovered = this._hoveredThreadIdx;
     this._hoveredThreadIdx = (ti >= 0) ? ti : -1;
@@ -441,18 +548,19 @@ const ThreadTimeline = {
 
     if (entry) {
       this.canvas.style.cursor = 'pointer';
-      const lc = this.LEVEL_COLORS[entry.level] || '#a6adc8';
-      this.tooltip.style.display = 'block';
-      this.tooltip.style.left = (e.clientX + 15) + 'px';
-      this.tooltip.style.top = (e.clientY - 10) + 'px';
+      const lc = this._levelColors[entry.level] || this._tc.textMuted;
       const method = this._detailThread ? this._extractMethod(entry) : '';
+      const tc = this._tc;
       this.tooltip.innerHTML =
         `<div style="font-weight:600;color:${lc};font-size:12px">${entry.level||'N/A'}</div>
-        <div style="font-size:11px;color:#a6adc8">${esc(entry.thread||entry.tid||'-')}</div>
-        ${method ? `<div style="font-size:11px;color:#89dceb">${esc(method)}</div>` : ''}
-        <div style="font-size:11px">${Utils.formatDate(entry.date)}</div>
-        <div style="font-size:11px;color:#6c7086">行 #${entry.index+1}</div>
-        <div style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${esc(entry.message||entry.raw)}</div>`;
+        <div style="font-size:11px;color:${tc.text}">${esc(entry.thread||entry.tid||'-')}</div>
+        ${method ? `<div style="font-size:11px;color:${tc.accent}">${esc(method)}</div>` : ''}
+        <div style="font-size:11px;color:${tc.text}">${Utils.formatDate(entry.date)}</div>
+        <div style="font-size:11px;color:${tc.textMuted}">行 #${entry.index+1}</div>
+        <div style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:${tc.text}">${esc(entry.message||entry.raw)}</div>
+        <div style="font-size:10px;color:${tc.textMuted};margin-top:3px">点击定位到左侧日志表格</div>`;
+      this.tooltip.style.display = 'block';
+      this._positionTooltip(e);
     } else {
       const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
       this.canvas.style.cursor = ti >= 0 && x <= this.LABEL_WIDTH ? 'pointer' : 'crosshair';
@@ -460,6 +568,20 @@ const ThreadTimeline = {
     }
 
     if (prevHovered !== this._hoveredThreadIdx) this._draw();
+  },
+
+  // 定位 tooltip：贴近右/下边缘时自动翻转方向，确保完整可见
+  _positionTooltip(e) {
+    const MARGIN = 15;
+    const tip = this.tooltip;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const tw = tip.offsetWidth || 200, th = tip.offsetHeight || 100;
+    let left = e.clientX + MARGIN;
+    let top = e.clientY - 10;
+    if (left + tw > vw - 8) left = Math.max(8, e.clientX - tw - MARGIN);
+    if (top + th > vh - 8) top = Math.max(8, vh - th - 8);
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
   },
 
   _getItemIdx(y) {
@@ -551,8 +673,8 @@ const ThreadTimeline = {
     const ctx = this.ctx;
     ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
-    ctx.fillStyle = '#11121a'; ctx.fillRect(0, 0, cw, ch);
-    ctx.fillStyle = '#6c7086'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = this._tc.bg; ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = this._tc.textMuted; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(msg, cw / 2, ch / 2);
     ctx.restore();
   },
@@ -564,11 +686,11 @@ const ThreadTimeline = {
 
     ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
-    ctx.fillStyle = '#11121a'; ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = this._tc.bg; ctx.fillRect(0, 0, cw, ch);
 
     const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
     if (list.length === 0) {
-      ctx.fillStyle = '#6c7086'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = this._tc.textMuted; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(this._detailThread ? '没有匹配的方法' : '没有匹配的线程', cw / 2, ch / 2);
       ctx.restore(); return;
     }
@@ -593,6 +715,12 @@ const ThreadTimeline = {
       this._drawItem(ctx, i, cw, plotW, y);
     }
 
+    // label 列宽度拖拽手柄（边界线 + 顶部握把）
+    this._drawLabelResizeHandle(ctx, cw, ch);
+
+    // 联动标记：当前网格选中行
+    this._drawSelectedMarker(ctx, cw, ch, plotW);
+
     // 垂直滚动条
     this._drawScrollbar(ctx, cw, ch);
 
@@ -600,9 +728,26 @@ const ThreadTimeline = {
     ctx.restore();
   },
 
+  // label 列宽度拖拽手柄：边界竖线 + 顶部握把 + 悬停提示
+  _drawLabelResizeHandle(ctx, cw, ch) {
+    const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
+    if (labelEnd < 0 || labelEnd > cw) return;
+    ctx.save();
+    ctx.strokeStyle = this._tc.accent; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(labelEnd, this.MARGIN.top); ctx.lineTo(labelEnd, ch - this.MARGIN.bottom);
+    ctx.stroke();
+    // 顶部握把
+    ctx.globalAlpha = 0.85; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(labelEnd - 4, 6); ctx.lineTo(labelEnd + 4, 6);
+    ctx.moveTo(labelEnd - 4, 11); ctx.lineTo(labelEnd + 4, 11);
+    ctx.stroke();
+    ctx.restore();
+  },
+
   _drawSummary(ctx, cw, plotW) {
     const y = 8, labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
-    ctx.fillStyle = '#a6adc8'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillStyle = this._tc.text; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
 
     const rangeMs = this.timeRange;
     let rangeStr;
@@ -629,13 +774,13 @@ const ThreadTimeline = {
     const plotX2 = cw - this.MARGIN.right;
     const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
 
-    ctx.fillStyle = '#161822'; ctx.fillRect(0, 0, labelEnd, ch);
-    ctx.strokeStyle = '#252636'; ctx.lineWidth = 1;
+    ctx.fillStyle = this._tc.bgLabel; ctx.fillRect(0, 0, labelEnd, ch);
+    ctx.strokeStyle = this._tc.border; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(labelEnd, 0); ctx.lineTo(labelEnd, ch); ctx.stroke();
 
     // 垂直时间网格线
     const tickCount = Math.max(2, Math.floor(8 / this.zoomLevel));
-    ctx.strokeStyle = '#1e2030'; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = this._tc.borderSoft; ctx.lineWidth = 0.5;
     for (let i = 0; i <= tickCount; i++) {
       const t = this.minTime + (this.timeRange / tickCount) * i;
       const px = labelEnd + ((t - this.minTime) / this.timeRange) * plotW * this.zoomLevel + this.offsetX;
@@ -654,10 +799,10 @@ const ThreadTimeline = {
       const y = this.MARGIN.top + i * this.SWIMLANE_H - this.scrollY;
       if (y + this.SWIMLANE_H < this.MARGIN.top || y > ch - this.MARGIN.bottom) continue;
       if (i % 2 === 0) {
-        ctx.fillStyle = '#141520';
+        ctx.fillStyle = this._tc.bgAlt;
         ctx.fillRect(labelEnd, y, plotX2 - labelEnd, this.SWIMLANE_H);
       }
-      ctx.strokeStyle = '#1e2030'; ctx.lineWidth = 0.5;
+      ctx.strokeStyle = this._tc.borderSoft; ctx.lineWidth = 0.5;
       ctx.beginPath(); ctx.moveTo(labelEnd, y + this.SWIMLANE_H); ctx.lineTo(plotX2, y + this.SWIMLANE_H); ctx.stroke();
     }
   },
@@ -676,20 +821,20 @@ const ThreadTimeline = {
     const isHovered = idx === this._hoveredThreadIdx;
 
     if (isHovered) {
-      ctx.fillStyle = 'rgba(122,162,247,0.08)';
+      ctx.fillStyle = this._tc.accent + '14';
       ctx.fillRect(labelEnd, y, plotX2 - labelEnd, this.SWIMLANE_H);
-      ctx.fillStyle = 'rgba(122,162,247,0.06)';
+      ctx.fillStyle = this._tc.accent + '10';
       ctx.fillRect(0, y, labelEnd, this.SWIMLANE_H);
     }
 
     // 标签
-    ctx.fillStyle = isHovered ? '#fff' : source.color;
+    ctx.fillStyle = isHovered ? this._tc.text : source.color;
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'right';
     const dn = name.length > 20 ? name.slice(0, 19) + '…' : name;
     ctx.fillText(dn, labelEnd - 8, cy + 4);
 
-    ctx.fillStyle = isHovered ? '#a6adc8' : '#565f89';
+    ctx.fillStyle = isHovered ? this._tc.text : this._tc.textMuted;
     ctx.font = '9px sans-serif';
     ctx.fillText(String(source.entries.length), labelEnd - 8, cy - 8);
 
@@ -722,7 +867,7 @@ const ThreadTimeline = {
     }
 
     for (const [lvl, segs] of Object.entries(buckets)) {
-      const color = this.LEVEL_COLORS[lvl] || '#a6adc8';
+      const color = this._levelColors[lvl] || this._tc.textMuted;
       // ERROR/FATAL 发光效果
       if (lvl === 'ERROR' || lvl === 'FATAL') {
         ctx.fillStyle = color;
@@ -739,6 +884,45 @@ const ThreadTimeline = {
     }
   },
 
+  // 联动标记：高亮当前网格选中行对应的时间点（白色圆环 + 十字准线）
+  _drawSelectedMarker(ctx, cw, ch, plotW) {
+    const sel = this._selectedEntry;
+    if (!sel || !sel.date) return;
+    const sources = this._detailThread ? this._detailMethods : this.threads;
+    const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+    const lane = sources.find(s => s.entries.includes(sel));
+    if (!lane || !lane._positions) return;
+    const idx = list.indexOf(lane.name);
+    if (idx < 0) return;
+
+    const y = this.MARGIN.top + idx * this.SWIMLANE_H - this.scrollY + this.SWIMLANE_H / 2;
+    if (y < this.MARGIN.top - 8 || y > ch - this.MARGIN.bottom + 8) return;
+
+    const t = (sel.date.getTime() - this.minTime) / this.timeRange;
+    const x = (this.MARGIN.left + this.LABEL_WIDTH + t * plotW) * this.zoomLevel + this.offsetX;
+    const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
+    if (x < labelEnd || x > cw - this.MARGIN.right) return;
+
+    ctx.save();
+    // 半透明光晕
+    ctx.fillStyle = this._tc.accent + '2e';
+    ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
+    // 主题强调色圆环 + 白色内芯
+    ctx.strokeStyle = this._tc.accent; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.stroke();
+    // 十字准线
+    ctx.strokeStyle = this._tc.accent; ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 13); ctx.lineTo(x, y - 9);
+    ctx.moveTo(x, y + 9); ctx.lineTo(x, y + 13);
+    ctx.moveTo(x - 13, y); ctx.lineTo(x - 9, y);
+    ctx.moveTo(x + 9, y); ctx.lineTo(x + 13, y);
+    ctx.stroke();
+    ctx.restore();
+  },
+
   _drawDensity(ctx, pos, levels, count, cy, x1, x2, z, ox) {
     const colMap = {};
     for (let j = 0; j < count; j++) {
@@ -750,12 +934,11 @@ const ThreadTimeline = {
     const maxH = this.SWIMLANE_H * 0.8;
     let maxCount = 1;
     for (const v of Object.values(colMap)) { if (v > maxCount) maxCount = v; }
-
     for (const [key, cnt] of Object.entries(colMap)) {
       const [pxStr, lvlStr] = key.split(':');
       const px = parseInt(pxStr), lvl = parseInt(lvlStr);
       const h = Math.max(1, (cnt / maxCount) * maxH);
-      const color = this.LEVEL_COLORS[['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][lvl]] || '#a6adc8';
+      const color = this._levelColors[['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][lvl]] || this._tc.textMuted;
       ctx.fillStyle = color;
       ctx.fillRect(px - 0.5, cy - h / 2, 1, h);
     }
@@ -772,9 +955,9 @@ const ThreadTimeline = {
     const thumbH = Math.max(20, (viewH / contentH) * trackH);
     const thumbY = trackY + (this.scrollY / contentH) * trackH;
 
-    ctx.fillStyle = '#252636';
+    ctx.fillStyle = this._tc.border;
     ctx.fillRect(trackX, trackY, 4, trackH);
-    ctx.fillStyle = '#45475a';
+    ctx.fillStyle = this._tc.textMuted;
     ctx.fillRect(trackX, thumbY, 4, thumbH);
   },
 
@@ -782,24 +965,67 @@ const ThreadTimeline = {
     const axisY = ch - this.MARGIN.bottom + 8;
     const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
     const plotX2 = cw - this.MARGIN.right;
+    const tc = this._tc;
 
-    ctx.strokeStyle = '#45475a'; ctx.lineWidth = 1;
+    ctx.strokeStyle = tc.border; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(labelEnd, axisY); ctx.lineTo(plotX2, axisY); ctx.stroke();
 
-    ctx.fillStyle = '#a6adc8'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-    const tickCount = Math.max(2, Math.floor(8 / this.zoomLevel));
+    const DAY = 86400000;
     const rangeMs = this.timeRange;
+
+    // 日期维度：跨天时绘制午夜分隔线 + 日期标签
+    const dayCount = rangeMs / DAY;
+    if (dayCount >= 1) {
+      const d0 = new Date(this.minTime);
+      const firstMidnight = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()).getTime() + DAY;
+      const stepDays = dayCount > 31 ? Math.ceil(dayCount / 20) : 1;
+      ctx.save();
+      ctx.strokeStyle = tc.border; ctx.globalAlpha = 0.6; ctx.setLineDash([3, 3]);
+      for (let t = firstMidnight; t <= this.maxTime; t += DAY * stepDays) {
+        const px = labelEnd + ((t - this.minTime) / rangeMs) * plotW * this.zoomLevel + this.offsetX;
+        if (px < labelEnd || px > plotX2) continue;
+        ctx.beginPath(); ctx.moveTo(px, this.MARGIN.top); ctx.lineTo(px, axisY); ctx.stroke();
+      }
+      ctx.setLineDash([]); ctx.globalAlpha = 0.75;
+      ctx.fillStyle = tc.textMuted;
+      ctx.font = '9px monospace';
+      for (let t = firstMidnight; t <= this.maxTime; t += DAY * stepDays) {
+        const px = labelEnd + ((t - this.minTime) / rangeMs) * plotW * this.zoomLevel + this.offsetX;
+        if (px < labelEnd || px > plotX2) continue;
+        ctx.fillText(Utils.formatDate(new Date(t), 'MM-dd'), px, axisY - 8);
+      }
+      ctx.restore();
+    }
+
+    // 时间刻度：根据跨度自适应格式（跨天显示日期维度）
+    ctx.textAlign = 'center';
+    const tickCount = Math.max(2, Math.floor(8 / this.zoomLevel));
+    const multiDay = rangeMs >= DAY;
+    const week = 7 * DAY;
     let fmt;
     if (rangeMs < 60 * 1000) fmt = 'HH:mm:ss';
-    else if (rangeMs < 24 * 3600 * 1000) fmt = 'HH:mm';
-    else fmt = 'MM-dd HH:mm';
+    else if (!multiDay) fmt = 'HH:mm';
+    else if (rangeMs < week) fmt = 'MM-dd HH:mm';
+    else fmt = 'MM-dd';
 
     for (let i = 0; i <= tickCount; i++) {
       const t = this.minTime + (this.timeRange / tickCount) * i;
       const px = labelEnd + ((t - this.minTime) / this.timeRange) * plotW * this.zoomLevel + this.offsetX;
       if (px >= labelEnd && px <= plotX2) {
-        ctx.fillText(Utils.formatDate(new Date(t), fmt), px, axisY + 14);
-        ctx.strokeStyle = '#45475a'; ctx.lineWidth = 1;
+        if (multiDay && rangeMs < week) {
+          // 跨天：两行显示 日期 + 时间，避免日期混淆
+          ctx.fillStyle = tc.text;
+          ctx.font = '10px monospace';
+          ctx.fillText(Utils.formatDate(new Date(t), 'MM-dd'), px, axisY + 14);
+          ctx.fillStyle = tc.textMuted;
+          ctx.font = '9px monospace';
+          ctx.fillText(Utils.formatDate(new Date(t), 'HH:mm'), px, axisY + 25);
+        } else {
+          ctx.fillStyle = tc.text;
+          ctx.font = '10px monospace';
+          ctx.fillText(Utils.formatDate(new Date(t), fmt), px, axisY + 14);
+        }
+        ctx.strokeStyle = tc.border; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(px, axisY - 2); ctx.lineTo(px, axisY + 4); ctx.stroke();
       }
     }
@@ -818,6 +1044,8 @@ const ThreadTimeline = {
         this._updateDetailHeader();
         if (this._mode === 'level') Timeline.show(LogParser.entries);
         else this._refreshFromPidSelect();
+        // 切换后同步当前网格选中行标记
+        if (App && App.syncTimelineSelection) App.syncTimelineSelection();
       });
     });
     const pidSel = document.getElementById('timeline-pid-select');
@@ -839,6 +1067,11 @@ const ThreadTimeline = {
     const pid = document.getElementById('timeline-pid-select')?.value || '';
     const entries = pid ? LogParser.entries.filter(e => e.pid === pid) : LogParser.entries;
     this.show(pid, entries);
+    // 同步背景日志：时间线的 PID 上下文与网格过滤一致
+    if (LogFilter.state.pidFilter !== pid) {
+      LogFilter.state.pidFilter = pid;
+      if (App && App.refresh) App.refresh();
+    }
   },
 
   _collectPids() {

@@ -242,15 +242,25 @@
       <span id="timeline-detail-label" style="display:none;"></span>
       <input type="text" id="timeline-method-search" style="display:none;" placeholder="搜索方法..." />
       <div class="timeline-controls">
+        <button id="btn-timeline-locate" title="在时间线中定位当前选中的日志行">📌 定位当前行</button>
         <button id="btn-timeline-zoom-in">🔍+</button>
         <button id="btn-timeline-zoom-out">🔍-</button>
         <button id="btn-timeline-fit">↔️ 适应</button>
       </div>
+      <button id="btn-timeline-minimize" title="最小化（保留视图状态）">—</button>
       <button id="btn-close-timeline">✕</button>
     </div>
     <canvas id="timeline-canvas"></canvas>
-    <div id="timeline-tooltip" style="display:none;"></div>
   </div>
+
+<!-- 时间线面板宽度拖拽手柄 -->
+<div id="timeline-resizer" title="拖动调整宽度"></div>
+
+<!-- 时间线最小化后的悬浮按钮 -->
+<div id="timeline-minimized-btn" style="display:none;" title="恢复时间线">📈 时间线</div>
+
+<!-- 时间线 tooltip（位于面板外，避免被 overflow/transform 裁剪） -->
+<div id="timeline-tooltip" style="display:none;"></div>
 
 <!-- 高亮设置面板 (弹出) -->
 <div id="highlight-settings-panel" class="popup-panel" style="display:none;">
