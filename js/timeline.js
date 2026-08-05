@@ -57,22 +57,40 @@ const Timeline = {
     if (this.canvas && this.entries.length > 0) this.draw();
   },
 
+  // 当前是否激活级别模式（线程/级别共用同一 canvas，未激活时不处理事件）
+  _isActive() {
+    const btn = document.querySelector('.timeline-mode-btn.active');
+    return !!(btn && btn.dataset.mode === 'level');
+  },
+
   bindEvents() {
-    this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
-    this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-    this.canvas.addEventListener('mouseup', () => { this.dragging = false; });
+    this.canvas.addEventListener('mousedown', (e) => {
+      if (!this._isActive()) return;
+      this.onMouseDown(e);
+    });
+    this.canvas.addEventListener('mousemove', (e) => {
+      if (!this._isActive()) return;
+      this.onMouseMove(e);
+    });
+    this.canvas.addEventListener('mouseup', () => {
+      if (!this._isActive()) return;
+      this.dragging = false;
+    });
     this.canvas.addEventListener('mouseleave', () => {
+      if (!this._isActive()) return;
       this.dragging = false;
       this.tooltip.style.display = 'none';
     });
     this.canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      if (!this._isActive()) return;
       const rect = this.canvas.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       if (e.deltaY < 0) this.zoomIn(mouseX);
       else this.zoomOut(mouseX);
     });
     this.canvas.addEventListener('click', (e) => {
+      if (!this._isActive()) return;
       if (this.hoveredEntry) {
         // 点击条目 → 跳转到对应日志行（面板停靠保留，便于继续查看时间线）
         if (LogGrid.scrollToEntry(this.hoveredEntry)) {
@@ -81,9 +99,18 @@ const Timeline = {
       }
     });
 
-    document.getElementById('btn-timeline-zoom-in').addEventListener('click', () => this.zoomIn(this.canvas.width / this._dpr / 2));
-    document.getElementById('btn-timeline-zoom-out').addEventListener('click', () => this.zoomOut(this.canvas.width / this._dpr / 2));
-    document.getElementById('btn-timeline-fit').addEventListener('click', () => this.fitToData());
+    document.getElementById('btn-timeline-zoom-in').addEventListener('click', () => {
+      if (!this._isActive()) return;
+      this.zoomIn(this.canvas.width / this._dpr / 2);
+    });
+    document.getElementById('btn-timeline-zoom-out').addEventListener('click', () => {
+      if (!this._isActive()) return;
+      this.zoomOut(this.canvas.width / this._dpr / 2);
+    });
+    document.getElementById('btn-timeline-fit').addEventListener('click', () => {
+      if (!this._isActive()) return;
+      this.fitToData();
+    });
   },
 
   show(entries) {
@@ -229,6 +256,39 @@ const Timeline = {
     this.draw();
   },
 
+  // 自适应时间刻度：根据可视时间窗口生成对齐的刻度，避免放大后刻度消失
+  _getTimeTicks() {
+    const visibleRange = this._timeRange / Math.max(this.zoomLevel, 0.0001);
+    const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+      10000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000,
+      7200000, 14400000, 21600000, 43200000, 86400000, 172800000,
+      432000000, 864000000, 1728000000, 2592000000];
+    let step = steps[steps.length - 1];
+    const target = visibleRange / 8;
+    for (const s of steps) {
+      if (s >= target) { step = s; break; }
+    }
+    const fmt = this._getTickFormat(step, visibleRange);
+    const ticks = [];
+    // 覆盖平移后可能进入视口的时间范围（缩小时可视窗口超出数据范围）
+    const t0 = Math.floor((this._minTime - visibleRange) / step) * step;
+    const t1 = this._maxTime + visibleRange;
+    for (let t = t0; t <= t1; t += step) {
+      ticks.push({ t, fmt });
+    }
+    return ticks;
+  },
+
+  // 根据刻度步长选择标签格式（跨天窗口自动带上日期）
+  _getTickFormat(step, visibleRange) {
+    const multiDay = visibleRange >= 86400000;
+    if (step >= 86400000) return 'MM-dd';
+    if (step >= 3600000) return multiDay ? 'MM-dd HH:mm' : 'HH:mm';
+    if (step >= 60000) return multiDay ? 'MM-dd HH:mm' : 'HH:mm';
+    if (step >= 1000) return 'HH:mm:ss';
+    return 'HH:mm:ss.SSS';
+  },
+
   onMouseDown(e) {
     this.dragging = true;
     this.dragStartX = e.clientX;
@@ -362,22 +422,15 @@ const Timeline = {
       ctx.restore();
     }
 
-    // 时间刻度：根据跨度自适应格式（跨天显示日期维度）
+    // 时间刻度：根据可视窗口自适应（放大后仍保持合理的刻度密度）
+    const ticks = this._getTimeTicks();
     ctx.fillStyle = this._tc.textMuted;
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
-    const tickCount = Math.max(2, Math.floor(8 / this.zoomLevel));
-    const multiDay = rangeMs >= DAY;
-    let tickFmt;
-    if (rangeMs < 60 * 1000) tickFmt = 'HH:mm:ss';
-    else if (!multiDay) tickFmt = 'HH:mm:ss';
-    else if (rangeMs < 7 * DAY) tickFmt = 'MM-dd HH:mm';
-    else tickFmt = 'MM-dd';
-    for (let i = 0; i <= tickCount; i++) {
-      const t = this._minTime + (this._timeRange / tickCount) * i;
+    for (const { t, fmt } of ticks) {
       const px = margin.left + ((t - this._minTime) / this._timeRange) * plotWidth * this.zoomLevel + this.offsetX;
       if (px >= margin.left && px <= clientW - margin.right) {
-        ctx.fillText(Utils.formatDate(new Date(t), tickFmt), px, clientH - 5);
+        ctx.fillText(Utils.formatDate(new Date(t), fmt), px, clientH - 5);
         ctx.beginPath();
         ctx.moveTo(px, clientH - margin.bottom);
         ctx.lineTo(px, clientH - margin.bottom + 4);
