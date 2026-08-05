@@ -504,14 +504,14 @@ def _(t, flags):
     else:
         t.fail("缺少命中半径自适应缩放")
 
-    # 段块命中检测
-    if 'pos[hi]' in js and 'pos[lo]' in js and 'px > pos[hi]' in js:
-        t.ok("段块命中检测 (pos[hi] < px < pos[lo])")
+    # 段块命中检测（归一化时间坐标 t）
+    if 'pos[hi]' in js and 'pos[lo]' in js and 't > pos[hi]' in js:
+        t.ok("段块命中检测 (pos[hi] < t < pos[lo])")
     else:
         t.fail("缺少段块命中检测")
 
     # 边缘命中检测
-    if 'pos[hi] + hr' in js or 'pos[0] - hr' in js:
+    if 'pos[hi] + hrT' in js or 'pos[0] - hrT' in js:
         t.ok("边缘命中检测")
     else:
         t.fail("缺少边缘命中检测")
@@ -1265,10 +1265,15 @@ def _(t, flags):
     else:
         t.fail("label 边界缺少拖拽光标")
 
-    if '_precomputedPlotW = 0' in js and 'Math.max(90, Math.min(320' in js:
-        t.ok("拖拽时重算位置并限制宽度范围")
+    if '_labelCache.clear()' in js and 'Math.max(90, Math.min(320' in js:
+        t.ok("拖拽时清空标签缓存并限制宽度范围")
     else:
-        t.fail("缺少宽度限制或重算逻辑")
+        t.fail("缺少宽度限制或标签缓存清空")
+
+    if '_findVisibleRange' in js:
+        t.ok("可视条目二分查找区间（避免遍历全部日志）")
+    else:
+        t.fail("缺少可视区间二分查找")
 
 
 @suite.test("时间线-面板宽度拖拽")
@@ -1703,3 +1708,170 @@ def _(t, flags):
         t.ok("Timeline 画布/按钮事件全部隔离")
     else:
         t.fail("Timeline 事件隔离不完整")
+
+
+@suite.test("时间线-索引化数据查找")
+def _(t, flags):
+    """验证名称/条目索引（Map）替代线性查找，提升大量日志性能"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    for key, desc in (('_threadIndex', '线程名称索引'),
+                      ('_methodIndex', '方法名称索引'),
+                      ('_entryLane', '条目泳道索引')):
+        if key in js:
+            t.ok(f"包含 {desc} (Map 查找)")
+        else:
+            t.fail(f"缺少 {desc}")
+
+    # 绘制热路径不应再使用线性 find/includes
+    hot_codes = ['_drawItem', '_findEntryAt', '_drawSelectedMarker', 'locateEntry']
+    for code in hot_codes:
+        idx = js.find(code)
+        if idx < 0:
+            t.fail(f"缺少 {code}")
+            continue
+        seg = js[idx:idx + 1200]
+        if '.find(' not in seg and '.entries.includes(' not in seg:
+            t.ok(f"{code} 使用索引查找（无线性扫描）")
+        else:
+            t.fail(f"{code} 仍存在线性查找")
+
+
+@suite.test("时间线-位置归一化与可视区间")
+def _(t, flags):
+    """验证位置存归一化时间，且绘制只处理可视条目区间"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    if '_findVisibleRange' in js:
+        t.ok("包含可视区间二分查找")
+    else:
+        t.fail("缺少可视区间二分查找")
+
+    # 位置与列宽解耦：归一化时间，列宽/面板宽度变化无需重算
+    if "positions[j] = (e.date.getTime() - this.minTime) / this.timeRange" in js:
+        t.ok("位置归一化为时间比例（列宽无关）")
+    else:
+        t.fail("位置未归一化")
+
+    if 'if (this._precomputedPlotW !== plotW) this._precomputePositions()' not in js:
+        t.ok("绘制路径不再按列宽重算位置")
+    else:
+        t.fail("绘制路径仍按列宽重算位置")
+
+
+@suite.test("时间线-label 文字自适应与悬停提示")
+def _(t, flags):
+    """验证 source 列文字按可用宽度截断、悬停显示完整名称"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    if '_labelCache' in js:
+        t.ok("标签截断结果缓存（避免每帧 measureText）")
+    else:
+        t.fail("缺少标签截断缓存")
+
+    if 'ctx.measureText(name).width <= availW' in js:
+        t.ok("按像素宽度判断是否需要截断（不再固定 20 字符）")
+    else:
+        t.fail("仍使用固定字符数截断")
+
+    if 'name.length > 20' not in js or 'name.slice(0, 19)' not in js:
+        t.ok("已移除固定 20 字符截断")
+    else:
+        t.fail("仍存在固定 20 字符截断")
+
+    if '点击过滤 · 双击查看方法' in js:
+        t.ok("标签列悬停显示完整名称与操作提示")
+    else:
+        t.fail("缺少标签列悬停提示")
+
+
+@suite.test("时间线-tooltip 节流与方法缓存")
+def _(t, flags):
+    """验证 tooltip 内容只在变化时重建、方法名解析缓存到条目"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+
+    if 'this._tooltipEntry' in js:
+        t.ok("tooltip 内容按条目变化重建")
+    else:
+        t.fail("缺少 tooltip 节流")
+
+    if 'entry._methodName === undefined' in js:
+        t.ok("方法名解析缓存到条目")
+    else:
+        t.fail("缺少方法名缓存")
+
+
+@suite.test("时间线-可视区间二分查找正确性")
+def _(t, flags):
+    """Node.js 执行验证 _findVisibleRange 返回正确的可视条目区间"""
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(tt_path, encoding='utf-8').read()
+    body = _extract_js_func_body(js, '_findVisibleRange(pos, n, worldLo, worldHi) {')
+    if not body:
+        t.fail("无法提取 _findVisibleRange")
+        return
+
+    test_code = """
+const obj = { _findVisibleRange: function(pos, n, worldLo, worldHi) {
+%s
+} };
+let pass = 0, fail = 0;
+function check(cond, msg) {
+  if (cond) pass++;
+  else { fail++; console.log('FAIL: ' + msg); }
+}
+// 构造 0..99 共 100 个归一化时间位置
+const pos = new Float64Array(100);
+for (let i = 0; i < 100; i++) pos[i] = i / 100;
+let r;
+// 全范围
+r = obj._findVisibleRange(pos, 100, -1, 2);
+check(r[0] === 0 && r[1] === 100, '全范围 ' + JSON.stringify(r));
+// 中间窗口 [0.30, 0.65)
+r = obj._findVisibleRange(pos, 100, 0.30, 0.65);
+check(r[0] === 30 && r[1] === 66, '中间窗口 ' + JSON.stringify(r));
+// 空窗口（在数据之后）
+r = obj._findVisibleRange(pos, 100, 1.5, 2.0);
+check(r[0] === 100 && r[1] === 100, '空窗口右侧 ' + JSON.stringify(r));
+// 空窗口（在数据之前）
+r = obj._findVisibleRange(pos, 100, -2, -1);
+check(r[0] === 0 && r[1] === 0, '空窗口左侧 ' + JSON.stringify(r));
+// 边界包含
+r = obj._findVisibleRange(pos, 100, 0, 0.05);
+check(r[0] === 0 && r[1] === 6, '左边界 ' + JSON.stringify(r));
+// 随机抽样交叉验证
+for (let k = 0; k < 200; k++) {
+  const a = Math.random() * 1.2 - 0.1;
+  const b = a + Math.random() * 1.0;
+  r = obj._findVisibleRange(pos, 100, a, b);
+  // 暴力验证
+  let lo = 0;
+  while (lo < 100 && pos[lo] < a) lo++;
+  let hi = lo;
+  while (hi < 100 && pos[hi] <= b) hi++;
+  if (r[0] !== lo || r[1] !== hi) {
+    fail++;
+    console.log('FAIL: 随机窗口 a=' + a.toFixed(3) + ' b=' + b.toFixed(3) + ' got=' + JSON.stringify(r) + ' want=' + JSON.stringify([lo, hi]));
+  } else pass++;
+}
+console.log('PASS:' + pass + ' FAIL:' + fail);
+"""
+    test_code = test_code % body
+    proc = subprocess.run(['node', '-e', test_code], capture_output=True, text=True, timeout=10)
+
+    if proc.returncode != 0:
+        t.fail(f"Node.js 执行失败: {proc.stderr}")
+        return
+    output = proc.stdout.strip()
+    if 'FAIL:0' in output:
+        m = re.search(r'PASS:(\d+)', output)
+        t.ok(f"可视区间二分查找正确 ({m.group(1)} 个断言)")
+    else:
+        for line in output.split('\n'):
+            if line.startswith('FAIL:'):
+                t.fail(line)
+        t.fail("可视区间二分查找部分断言失败")

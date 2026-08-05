@@ -47,6 +47,8 @@ const ThreadTimeline = {
     // 恢复用户自定义的 label 列宽度
     const savedLabelW = parseInt(localStorage.getItem('tl-label-width'), 10);
     if (savedLabelW >= 90 && savedLabelW <= 320) this.LABEL_WIDTH = savedLabelW;
+    this._labelCache = new Map();
+    this._tooltipEntry = null;
     this._refreshTheme();
     this._bindCanvasEvents();
     this._bindHeaderEvents();
@@ -97,6 +99,7 @@ const ThreadTimeline = {
       return;
     }
 
+    this._labelCache.clear();
     this._groupByThread();
     this._buildTimeRange();
     this._precomputePositions();
@@ -126,6 +129,13 @@ const ThreadTimeline = {
       _positions: null,
       _levels: null,
     }));
+    // 建立 名称→数据源 索引与 条目→泳道 索引（避免每帧线性查找）
+    this._threadIndex = new Map();
+    this._entryLane = new Map();
+    for (const s of this.threads) {
+      this._threadIndex.set(s.name, s);
+      for (const e of s.entries) this._entryLane.set(e, s.name);
+    }
   },
 
   _buildTimeRange() {
@@ -143,8 +153,7 @@ const ThreadTimeline = {
   },
 
   _precomputePositions() {
-    const plotW = this._getPlotWidth();
-    if (plotW <= 0) return;
+    // 位置只存归一化时间 t (0..1)，与列宽/绘图区宽度无关，列宽缩放无需重算
     const levelMap = { FATAL:0, ERROR:1, WARN:2, INFO:3, DEBUG:4, TRACE:5 };
     const targets = this._detailThread ? this._detailMethods : this.threads;
     for (const target of targets) {
@@ -153,14 +162,28 @@ const ThreadTimeline = {
       const levels = new Uint8Array(count);
       for (let j = 0; j < count; j++) {
         const e = target.entries[j];
-        const t = (e.date.getTime() - this.minTime) / this.timeRange;
-        positions[j] = this.MARGIN.left + this.LABEL_WIDTH + t * plotW;
+        positions[j] = (e.date.getTime() - this.minTime) / this.timeRange;
         levels[j] = levelMap[e.level] ?? 6;
       }
       target._positions = positions;
       target._levels = levels;
     }
-    this._precomputedPlotW = plotW;
+  },
+
+  // 二分查找排序数组中 [worldLo, worldHi) 的可视条目区间
+  _findVisibleRange(pos, n, worldLo, worldHi) {
+    let l = 0, r = n;
+    while (l < r) {
+      const m = (l + r) >> 1;
+      if (pos[m] < worldLo) l = m + 1; else r = m;
+    }
+    const lo = l;
+    l = lo; r = n;
+    while (l < r) {
+      const m = (l + r) >> 1;
+      if (pos[m] <= worldHi) l = m + 1; else r = m;
+    }
+    return [lo, l];
   },
 
   _filterThreads(searchText) {
@@ -178,7 +201,7 @@ const ThreadTimeline = {
   // ===== 线程详情（方法时间线） =====
 
   openThreadDetail(threadName) {
-    const thread = this.threads.find(t => t.name === threadName);
+    const thread = this._threadIndex && this._threadIndex.get(threadName);
     if (!thread) return;
     this._detailThread = threadName;
     this._detailMethodSearch = '';
@@ -198,7 +221,13 @@ const ThreadTimeline = {
     this._detailThread = null;
     this._detailMethods = [];
     this._detailVisibleMethods = [];
+    this._methodIndex = null;
     this.scrollY = 0;
+    // 重建 条目→线程泳道 索引（详情模式用的是方法索引）
+    this._entryLane = new Map();
+    for (const s of this.threads) {
+      for (const e of s.entries) this._entryLane.set(e, s.name);
+    }
     // 清除时间线触发的过滤条件，恢复 grid 显示全部数据
     LogFilter.state.threadFilter = '';
     LogFilter.state.sourceFilter = '';
@@ -227,9 +256,14 @@ const ThreadTimeline = {
       _positions: null,
       _levels: null,
     }));
-    // 预计算位置
-    const plotW = this._getPlotWidth();
-    if (plotW <= 0) return;
+    // 建立 名称→方法 索引与 条目→方法 索引（避免每帧线性查找）
+    this._methodIndex = new Map();
+    this._entryLane = new Map();
+    for (const m of this._detailMethods) {
+      this._methodIndex.set(m.name, m);
+      for (const e of m.entries) this._entryLane.set(e, m.name);
+    }
+    // 预计算位置（归一化时间，与列宽无关）
     const levelMap = { FATAL:0, ERROR:1, WARN:2, INFO:3, DEBUG:4, TRACE:5 };
     for (const m of this._detailMethods) {
       const count = m.entries.length;
@@ -237,8 +271,7 @@ const ThreadTimeline = {
       const levels = new Uint8Array(count);
       for (let j = 0; j < count; j++) {
         const e = m.entries[j];
-        const t = (e.date.getTime() - this.minTime) / this.timeRange;
-        positions[j] = this.MARGIN.left + this.LABEL_WIDTH + t * plotW;
+        positions[j] = (e.date.getTime() - this.minTime) / this.timeRange;
         levels[j] = levelMap[e.level] ?? 6;
       }
       m._positions = positions;
@@ -261,7 +294,11 @@ const ThreadTimeline = {
   },
 
   _extractMethod(entry) {
-    return Utils.extractMethodName(entry.source);
+    // 缓存到 entry，避免大量日志时重复解析 source
+    if (entry._methodName === undefined) {
+      entry._methodName = Utils.extractMethodName(entry.source);
+    }
+    return entry._methodName;
   },
 
   _updateDetailHeader() {
@@ -295,16 +332,15 @@ const ThreadTimeline = {
   locateEntry(entry) {
     if (!entry || !entry.date) return false;
     this._selectedEntry = entry;
-    const sources = this._detailThread ? this._detailMethods : this.threads;
     const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
-    const lane = sources.find(s => s.entries.includes(entry));
-    if (!lane) {
+    const laneName = this._entryLane ? this._entryLane.get(entry) : null;
+    if (!laneName) {
       this._draw();
       return false;
     }
 
     // 垂直滚动到所在泳道
-    const idx = list.indexOf(lane.name);
+    const idx = list.indexOf(laneName);
     if (idx >= 0) {
       const viewH = this._getViewportH();
       const laneTop = idx * this.SWIMLANE_H;
@@ -510,7 +546,7 @@ const ThreadTimeline = {
       if (y >= this.MARGIN.top && Math.abs(x - this.LABEL_WIDTH) <= 8) {
         // 双击边界 → 重置 label 列宽
         this.LABEL_WIDTH = 160;
-        this._precomputedPlotW = 0;
+        this._labelCache.clear();
         localStorage.setItem('tl-label-width', String(this.LABEL_WIDTH));
         this._draw();
         return;
@@ -587,7 +623,7 @@ const ThreadTimeline = {
         this._labelDragStartW + (e.clientX - this._labelDragStartX)));
       if (w !== this.LABEL_WIDTH) {
         this.LABEL_WIDTH = w;
-        this._precomputedPlotW = 0;
+        this._labelCache.clear();
         this._draw();
       }
       return;
@@ -609,28 +645,54 @@ const ThreadTimeline = {
     const ti = this._getItemIdx(y);
     const prevHovered = this._hoveredThreadIdx;
     this._hoveredThreadIdx = (ti >= 0) ? ti : -1;
+    const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
 
     const entry = this._findEntryAt(x, y);
     this.hoveredEntry = entry;
 
     if (entry) {
       this.canvas.style.cursor = 'pointer';
-      const lc = this._levelColors[entry.level] || this._tc.textMuted;
-      const method = this._detailThread ? this._extractMethod(entry) : '';
-      const tc = this._tc;
-      this.tooltip.innerHTML =
-        `<div style="font-weight:600;color:${lc};font-size:12px">${entry.level||'N/A'}</div>
-        <div style="font-size:11px;color:${tc.text}">${esc(entry.thread||entry.tid||'-')}</div>
-        ${method ? `<div style="font-size:11px;color:${tc.accent}">${esc(method)}</div>` : ''}
-        <div style="font-size:11px;color:${tc.text}">${Utils.formatDate(entry.date)}</div>
-        <div style="font-size:11px;color:${tc.textMuted}">行 #${entry.index+1}</div>
-        <div style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:${tc.text}">${esc(entry.message||entry.raw)}</div>
-        <div style="font-size:10px;color:${tc.textMuted};margin-top:3px">点击定位到左侧日志表格</div>`;
+      // tooltip 内容只在条目变化时重建，避免大量日志时每帧 innerHTML
+      if (entry !== this._tooltipEntry) {
+        this._tooltipEntry = entry;
+        const lc = this._levelColors[entry.level] || this._tc.textMuted;
+        const method = this._detailThread ? this._extractMethod(entry) : '';
+        const tc = this._tc;
+        this.tooltip.innerHTML =
+          `<div style="font-weight:600;color:${lc};font-size:12px">${entry.level||'N/A'}</div>
+          <div style="font-size:11px;color:${tc.text}">${esc(entry.thread||entry.tid||'-')}</div>
+          ${method ? `<div style="font-size:11px;color:${tc.accent}">${esc(method)}</div>` : ''}
+          <div style="font-size:11px;color:${tc.text}">${Utils.formatDate(entry.date)}</div>
+          <div style="font-size:11px;color:${tc.textMuted}">行 #${entry.index+1}</div>
+          <div style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:${tc.text}">${esc(entry.message||entry.raw)}</div>
+          <div style="font-size:10px;color:${tc.textMuted};margin-top:3px">点击定位到左侧日志表格</div>`;
+      }
+      this.tooltip.style.display = 'block';
+      this._positionTooltip(e);
+    } else if (ti >= 0 && x <= labelEnd) {
+      // 标签列悬停：显示完整名称（修复截断后看不到全名）
+      const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
+      const lname = list[ti];
+      if (lname !== this._tooltipEntry) {
+        this._tooltipEntry = lname;
+        const src = this._detailThread
+          ? (this._methodIndex && this._methodIndex.get(lname))
+          : (this._threadIndex && this._threadIndex.get(lname));
+        const cnt = src ? src.entries.length : 0;
+        const tc = this._tc;
+        const hint = this._detailThread ? '点击过滤方法' : '点击过滤 · 双击查看方法';
+        this.tooltip.innerHTML =
+          `<div style="font-weight:600;color:${src ? src.color : tc.text};font-size:12px">${esc(lname)}</div>
+          <div style="font-size:11px;color:${tc.text}">${cnt.toLocaleString()} 条日志</div>
+          <div style="font-size:10px;color:${tc.textMuted};margin-top:3px">${hint}</div>`;
+      }
+      this.canvas.style.cursor = 'pointer';
       this.tooltip.style.display = 'block';
       this._positionTooltip(e);
     } else {
+      this._tooltipEntry = null;
       const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
-      this.canvas.style.cursor = ti >= 0 && x <= this.LABEL_WIDTH ? 'pointer' : 'crosshair';
+      this.canvas.style.cursor = ti >= 0 && x <= labelEnd ? 'pointer' : 'crosshair';
       this.tooltip.style.display = 'none';
     }
 
@@ -664,12 +726,16 @@ const ThreadTimeline = {
     const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
     const name = list[ti];
     const source = this._detailThread
-      ? this._detailMethods.find(m => m.name === name)
-      : this.threads.find(t => t.name === name);
+      ? (this._methodIndex && this._methodIndex.get(name))
+      : (this._threadIndex && this._threadIndex.get(name));
     if (!source || !source._positions) return null;
     const pos = source._positions;
-    const hr = Math.max(6, 10 / this.zoomLevel);
-    const px = (x - this.offsetX) / this.zoomLevel;
+    const plotW = this._getPlotWidth();
+    if (plotW <= 0) return null;
+    const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
+    // 归一化时间坐标：屏幕 px → t
+    const t = ((x - this.offsetX) / this.zoomLevel - labelEnd) / plotW;
+    const hrT = Math.max(6, 10 / this.zoomLevel) / this.zoomLevel / plotW;
     const n = pos.length;
     if (n === 0) return null;
 
@@ -677,37 +743,37 @@ const ThreadTimeline = {
     let lo = 0, hi = n - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (pos[mid] < px - hr) lo = mid + 1;
-      else if (pos[mid] > px + hr) hi = mid - 1;
+      if (pos[mid] < t - hrT) lo = mid + 1;
+      else if (pos[mid] > t + hrT) hi = mid - 1;
       else {
-        let best = mid, bestDist = Math.abs(pos[mid] - px);
-        for (let k = mid - 1; k >= 0 && pos[k] >= px - hr; k--) {
-          const d = Math.abs(pos[k] - px);
+        let best = mid, bestDist = Math.abs(pos[mid] - t);
+        for (let k = mid - 1; k >= 0 && pos[k] >= t - hrT; k--) {
+          const d = Math.abs(pos[k] - t);
           if (d < bestDist) { bestDist = d; best = k; }
         }
-        for (let k = mid + 1; k < n && pos[k] <= px + hr; k++) {
-          const d = Math.abs(pos[k] - px);
+        for (let k = mid + 1; k < n && pos[k] <= t + hrT; k++) {
+          const d = Math.abs(pos[k] - t);
           if (d < bestDist) { bestDist = d; best = k; }
         }
-        if (bestDist < hr + 4) return source.entries[best];
+        if (bestDist < hrT + 4 / this.zoomLevel / plotW) return source.entries[best];
         break;
       }
     }
 
     // 段块模式：鼠标在两条目之间（段块中间），找所在段
-    // hi < lo 此时 hi = 最后一个 < px - hr 的索引, lo = 第一个 > px + hr 的索引
+    // hi < lo 此时 hi = 最后一个 < t - hrT 的索引, lo = 第一个 > t + hrT 的索引
     if (hi >= 0 && lo < n) {
       // 鼠标在 pos[hi] 和 pos[lo] 之间，属于 pos[hi] 的段
-      if (px > pos[hi] && px < pos[lo]) {
+      if (t > pos[hi] && t < pos[lo]) {
         return source.entries[hi];
       }
     }
     // 边缘情况：鼠标在最后一个位置之后
-    if (hi === n - 1 && px > pos[hi] && px < pos[hi] + hr * 4) {
+    if (hi === n - 1 && t > pos[hi] && t < pos[hi] + hrT * 4) {
       return source.entries[hi];
     }
     // 边缘情况：鼠标在第一个位置之前
-    if (lo === 0 && px < pos[0] && px > pos[0] - hr * 4) {
+    if (lo === 0 && t < pos[0] && t > pos[0] - hrT * 4) {
       return source.entries[0];
     }
     return null;
@@ -764,7 +830,6 @@ const ThreadTimeline = {
 
     const plotW = this._getPlotWidth();
     if (plotW <= 0) { ctx.restore(); return; }
-    if (this._precomputedPlotW !== plotW) this._precomputePositions();
 
     this._drawGrid(ctx, cw, ch, plotW);
     this._drawSummary(ctx, cw, plotW);
@@ -877,8 +942,8 @@ const ThreadTimeline = {
     const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
     const name = list[idx];
     const source = this._detailThread
-      ? this._detailMethods.find(m => m.name === name)
-      : this.threads.find(t => t.name === name);
+      ? (this._methodIndex && this._methodIndex.get(name))
+      : (this._threadIndex && this._threadIndex.get(name));
     if (!source) return;
 
     const cy = y + this.SWIMLANE_H / 2;
@@ -893,11 +958,29 @@ const ThreadTimeline = {
       ctx.fillRect(0, y, labelEnd, this.SWIMLANE_H);
     }
 
-    // 标签
-    ctx.fillStyle = isHovered ? this._tc.text : source.color;
+    // 标签：按可用像素宽度截断（非固定字符数），测量结果缓存避免每帧 measureText
+    const availW = labelEnd - 14;
+    const lcKey = name + '|' + labelEnd;
+    let dn = this._labelCache.get(lcKey);
+    if (dn === undefined) {
+      ctx.font = 'bold 11px monospace';
+      if (ctx.measureText(name).width <= availW) {
+        dn = name;
+      } else {
+        let lo = 1, hi = name.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (ctx.measureText(name.slice(0, mid) + '…').width <= availW) lo = mid + 1;
+          else hi = mid;
+        }
+        dn = name.slice(0, Math.max(1, lo - 1)) + '…';
+      }
+      this._labelCache.set(lcKey, dn);
+      if (this._labelCache.size > 4000) this._labelCache.clear();
+    }
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'right';
-    const dn = name.length > 20 ? name.slice(0, 19) + '…' : name;
+    ctx.fillStyle = isHovered ? this._tc.text : source.color;
     ctx.fillText(dn, labelEnd - 8, cy + 4);
 
     ctx.fillStyle = isHovered ? this._tc.text : this._tc.textMuted;
@@ -910,7 +993,7 @@ const ThreadTimeline = {
     const z = this.zoomLevel, ox = this.offsetX;
 
     if (z < 0.3) {
-      this._drawDensity(ctx, pos, levels, count, cy, labelEnd, plotX2, z, ox);
+      this._drawDensity(ctx, pos, levels, count, cy, labelEnd, plotX2, z, ox, plotW);
       return;
     }
 
@@ -919,12 +1002,18 @@ const ThreadTimeline = {
     const barY = cy - barH / 2;
     const minW = Math.max(1, 1 / z * 0.3); // 最小宽度随缩放调整
 
+    // 只处理可视条目（二分查找区间），避免大量日志时遍历全部条目
+    const wLo = ((labelEnd - ox) / z - labelEnd) / plotW;
+    const wHi = ((plotX2 - ox) / z - labelEnd) / plotW;
+    const [v0, v1] = this._findVisibleRange(pos, count, wLo, wHi);
+    const b0 = Math.max(0, v0 - 1), b1 = Math.min(count, v1 + 1);
+
     const buckets = {};
-    for (let j = 0; j < count; j++) {
-      const x1 = pos[j] * z + ox;
+    for (let j = b0; j < b1; j++) {
+      const x1 = (labelEnd + pos[j] * plotW) * z + ox;
       if (x1 > plotX2 + 5) break;
       const x2 = Math.max(x1 + minW,
-        (j + 1 < count) ? pos[j + 1] * z + ox : x1 + minW);
+        (j + 1 < count) ? (labelEnd + pos[j + 1] * plotW) * z + ox : x1 + minW);
       if (x2 < labelEnd - 5) continue;
       const lvl = levels[j];
       const lvlName = ['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][lvl] || 'other';
@@ -954,11 +1043,10 @@ const ThreadTimeline = {
   _drawSelectedMarker(ctx, cw, ch, plotW) {
     const sel = this._selectedEntry;
     if (!sel || !sel.date) return;
-    const sources = this._detailThread ? this._detailMethods : this.threads;
     const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
-    const lane = sources.find(s => s.entries.includes(sel));
-    if (!lane || !lane._positions) return;
-    const idx = list.indexOf(lane.name);
+    const laneName = this._entryLane ? this._entryLane.get(sel) : null;
+    if (!laneName) return;
+    const idx = list.indexOf(laneName);
     if (idx < 0) return;
 
     const y = this.MARGIN.top + idx * this.SWIMLANE_H - this.scrollY + this.SWIMLANE_H / 2;
@@ -989,10 +1077,15 @@ const ThreadTimeline = {
     ctx.restore();
   },
 
-  _drawDensity(ctx, pos, levels, count, cy, x1, x2, z, ox) {
+  _drawDensity(ctx, pos, levels, count, cy, x1, x2, z, ox, plotW) {
+    const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
+    // 只统计可视列区间的条目，避免大量日志时遍历全部
+    const wLo = ((x1 - ox) / z - labelEnd) / plotW;
+    const wHi = ((x2 - ox) / z - labelEnd) / plotW;
+    const [v0, v1] = this._findVisibleRange(pos, count, wLo, wHi);
     const colMap = {};
-    for (let j = 0; j < count; j++) {
-      const px = Math.round(pos[j] * z + ox);
+    for (let j = v0; j < v1; j++) {
+      const px = Math.round((labelEnd + pos[j] * plotW) * z + ox);
       if (px < x1 || px > x2) continue;
       const key = px + ':' + levels[j];
       colMap[key] = (colMap[key] || 0) + 1;
@@ -1140,7 +1233,6 @@ const ThreadTimeline = {
     const panel = document.getElementById('timeline-panel');
     if (panel && panel.style.display !== 'none') {
       this._refreshDpr();
-      this._precomputedPlotW = 0;
       this._clampScrollY();
       if (this.entries.length > 0) this._draw();
     }
