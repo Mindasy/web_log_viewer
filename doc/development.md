@@ -233,7 +233,7 @@ Git tag v1.2.3
     │   js/utils.js               ← About 面板动态读取显示
     │       │
     │       ▼
-    │   scripts/package.sh        ← 打包
+    │   scripts/package.sh        ← 打包（仅运行时文件，不含 tools/）
     │       │
     │       ├── output/v1.2.3/weblogviewer.tar.gz  ← Release 附件
     │       │
@@ -246,7 +246,22 @@ Git tag v1.2.3
             │
             ▼
         GitHub Releases 页面      ← Release Notes + tar.gz 下载
+                                  + tools/ 下载/更新工具（3 平台脚本）
 ```
+
+### 下载/更新工具
+
+每个版本发布时会同时提供 **3 个平台的下载/更新工具脚本**（`tools/` 目录），自动从 GitHub Releases 获取最新版本：
+
+| 文件 | 适用平台 |
+|------|----------|
+| `tools/update-tool.sh` | Linux / macOS / Windows (MSYS2、Git Bash) |
+| `tools/update-tool.zsh` | macOS（默认 shell） |
+| `tools/update-tool.bat` | Windows（双击运行） |
+
+发布时这些脚本**仅作为独立 Release 附件上传**（`release.yml` 的 `softprops/action-gh-release` 同时上传三个脚本），方便单独下载使用；**不打包进 `weblogviewer.tar.gz`**（保持发布包仅含运行时文件）。
+
+脚本功能：自动检测系统代理（Windows 读注册表 / macOS `scutil` / Linux `gsettings` / 环境变量）→ 检查 curl、tar 依赖 → 获取最新 Release 信息 → 下载资产 → 解压。支持 `WLV_API_URL` 环境变量指定镜像 API。
 
 ### 本地打包
 

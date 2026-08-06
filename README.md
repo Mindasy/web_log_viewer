@@ -60,6 +60,17 @@ open http://localhost:8765
 
 也可以直接双击 `index.html` 打开，或使用其他静态服务器。
 
+**更新到最新版本**：使用随版本发布的下载/更新工具（zsh / bash / bat 三平台），自动检测系统代理并获取最新 Release：
+
+```bash
+# macOS / Linux
+./tools/update-tool.sh          # bash
+./tools/update-tool.zsh         # zsh
+
+# Windows
+update-tool.bat                 # 双击运行
+```
+
 > 详细安装方式请参阅 [安装指南](doc/install.md)。
 
 ## 使用场景

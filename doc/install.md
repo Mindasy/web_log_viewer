@@ -51,6 +51,31 @@ docker run -d -p 8765:80 -v $(pwd):/usr/share/nginx/html:ro nginx:alpine
 open http://localhost:8765
 ```
 
+### 方法四：下载/更新工具（自动获取最新版本）
+
+每次发版后，可从 **GitHub Releases 页面**直接下载最新版本（`weblogviewer.tar.gz`），或使用随版本发布的**下载/更新工具脚本**一键获取：
+
+| 系统 | 脚本 | 说明 |
+|------|------|------|
+| macOS | `tools/update-tool.zsh` | zsh 版本（macOS 默认 shell） |
+| Linux / macOS / Windows (MSYS2, Git Bash) | `tools/update-tool.sh` | bash 版本 |
+| Windows | `tools/update-tool.bat` | 双击运行，自动检测系统代理 |
+
+```bash
+# 默认下载 Mindasy/web_log_viewer 最新版 weblogviewer.tar.gz
+./tools/update-tool.sh              # bash
+./tools/update-tool.zsh             # zsh
+
+# 指定仓库 / 资产
+./tools/update-tool.sh owner/repo            # 自定义仓库
+./tools/update-tool.sh owner/repo app.zip    # 自定义资产
+
+# 使用镜像 API（可选，默认 GitHub API）
+WLV_API_URL=https://api.example.com/repos/.../releases/latest ./tools/update-tool.sh
+```
+
+Windows 下双击 `update-tool.bat` 即可。脚本会自动检测系统代理、清理旧版本、下载最新资产并解压到当前目录。
+
 ## 快速上手
 
 ### 第一步：加载日志文件

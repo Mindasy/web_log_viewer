@@ -19,14 +19,19 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
+
+      - name: 安装 zsh（用于 update-tool.zsh 语法检查）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
 
       - name: 全量验证（含重型解析 + 服务器冒烟）
         run: |
@@ -36,7 +41,7 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -59,10 +64,13 @@ jobs:
             -C "${{ steps.version.outputs.pages_dir }}"
 
       - name: 创建 Release 附件
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ steps.version.outputs.archive }}
+            tools/update-tool.sh
+            tools/update-tool.zsh
+            tools/update-tool.bat
           fail_on_unmatched_files: true
           make_latest: true
           generate_release_notes: true
