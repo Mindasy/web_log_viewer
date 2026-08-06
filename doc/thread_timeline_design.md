@@ -211,7 +211,7 @@ for (let j = 0; j < count; j++) {
 const ViewManager = {
   stack: [],           // 视图栈
   currentIndex: -1,    // -1 = 全局视图
-  MAX_DEPTH: 5,        // 最大深度
+  MAX_DEPTH: 10,       // 最大深度（超限时提示用户）
 };
 ```
 

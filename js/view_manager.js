@@ -3,7 +3,7 @@
 const ViewManager = {
   stack: [],           // 视图栈
   currentIndex: -1,    // 当前视图索引（-1 = 全局视图）
-  MAX_DEPTH: 5,        // 最大视图深度
+  MAX_DEPTH: 10,       // 最大视图深度
 
   // 视图对象结构
   // { name: string, entries: [], searchText: string, pidFilter: string,
@@ -29,6 +29,11 @@ const ViewManager = {
       timestamp: Date.now(),
     });
     this.currentIndex = this.stack.length - 1;
+    // 创建视图后清空当前搜索内容（过滤状态已固化到视图数据）
+    LogFilter.state.searchText = '';
+    LogFilter.resetSearch();
+    this._syncFilterInputs(this.stack[this.currentIndex]);
+    App.setViewData(this.stack[this.currentIndex].entries);
     this.renderBreadcrumb();
     return true;
   },
@@ -141,17 +146,90 @@ const ViewManager = {
       const v = this.stack[i];
       const active = i === this.currentIndex ? ' active' : '';
       html += `<span class="vb-sep">›</span>`;
-      html += `<span class="vb-crumb${active}" data-index="${i}">${this._escapeHtml(v.name)}</span>`;
+      // 视图项：名称 + 复制按钮 + 仅当前选中视图显示 ✕ 关闭按钮
+      html += `<span class="vb-crumb${active}" data-index="${i}">${this._escapeHtml(v.name)}` +
+        `<span class="vb-copy" data-index="${i}" title="复制视图名称">⧉</span>` +
+        (active ? `<span class="vb-close-single" data-index="${i}" title="关闭该视图及之后的所有视图">✕</span>` : '') +
+        `</span>`;
     }
+    // 关闭全部视图：清空视图栈并退出视图界面（隐藏面包屑）
+    html += `<span class="vb-close-all" title="关闭全部视图">✕</span>`;
     container.innerHTML = html;
     container.style.display = 'flex';
 
-    // 绑定点击事件
+    // 点击面包屑跳转
     container.querySelectorAll('.vb-crumb').forEach(el => {
       el.addEventListener('click', () => {
         this.gotoView(el.dataset.index);
       });
     });
+    // 复制视图名称
+    container.querySelectorAll('.vb-copy').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const v = this.stack[Number(btn.dataset.index)];
+        if (!v) return;
+        this._copyText(v.name);
+      });
+    });
+    // 每个视图的 ✕：关闭该视图及之后的所有视图（阻止冒泡到跳转）
+    container.querySelectorAll('.vb-close-single').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closeViewAt(Number(btn.dataset.index));
+      });
+    });
+    // 关闭全部视图
+    const closeAll = container.querySelector('.vb-close-all');
+    if (closeAll) {
+      closeAll.addEventListener('click', () => {
+        this.clear();
+      });
+    }
+  },
+
+  // 复制文本到剪贴板（带降级方案）
+  _copyText(text) {
+    const done = () => Utils.showToast(`已复制视图名称: ${text}`, 'success', 1500);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => this._copyFallback(text, done));
+    } else {
+      this._copyFallback(text, done);
+    }
+  },
+
+  _copyFallback(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      done();
+    } catch (e) {
+      Utils.showToast('复制失败', 'error');
+    }
+    document.body.removeChild(ta);
+  },
+
+  // 关闭第 i 个视图及其之后的所有视图（栈截断）
+  closeViewAt(i) {
+    if (i < 0 || i >= this.stack.length) return;
+    this.stack = this.stack.slice(0, i);
+    if (this.stack.length === 0) {
+      this._resetToGlobal();
+      return;
+    }
+    // 当前视图若位于被关闭区间，落到新的栈顶
+    if (this.currentIndex >= this.stack.length) {
+      this.currentIndex = this.stack.length - 1;
+    }
+    if (this.currentIndex >= 0) {
+      this._applyView();
+    }
+    this.renderBreadcrumb();
   },
 
   // 清除所有视图
@@ -163,6 +241,8 @@ const ViewManager = {
     LogFilter.state.pidFilter = '';
     LogFilter.state.threadFilter = '';
     LogFilter.resetSearch();
+    // 同步过滤输入框，保持界面一致（清除/重新加载后不残留旧过滤文本）
+    this._syncFilterInputs({ pidFilter: '', threadFilter: '' });
   },
 
   _escapeHtml(str) {

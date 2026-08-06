@@ -306,3 +306,98 @@ def _(t, flags):
                     f"渲染 [{new_vr},{actual_end}) 不包含目标")
             if new_vr == 0 and target > visible:
                 t.fail(f"{total}行 selectRow({target}): _virtualRow 回跳到 0!")
+
+
+def _select_row_ensure_visible(start_vr, target, total, view_rows):
+    """模拟 grid.selectRow 非居中路径（点击/键盘）：
+    保持视口，仅当目标不可见时最小滚动。"""
+    first = start_vr
+    if target < first:
+        new_vr = target
+    elif target >= first + view_rows:
+        new_vr = target - view_rows + 1
+    else:
+        new_vr = start_vr
+    return max(0, min(new_vr, max(0, total - view_rows)))
+
+
+def _select_row_center(start_vr, target, total, view_rows):
+    """模拟 grid.selectRow 居中路径（显式定位）：
+    目标行滚动到视口中间。"""
+    center_offset = view_rows // 2
+    return max(0, min(target - center_offset, total - view_rows))
+
+
+@suite.test("点击选中 — 不再居中 (双击书签可用)")
+def _(t, flags):
+    """验证普通点击 selectRow 只保持/最小滚动，不把行移到中间
+    （回归：点击后行跳中间导致双击书签落到错误行）"""
+    total = 1000
+    view = 22
+    # 视口在 [100, 122)，点击其中一行 → 视口必须保持不动
+    start_vr = 100
+    for target in range(start_vr, start_vr + view):
+        new_vr = _select_row_ensure_visible(start_vr, target, total, view)
+        t.check(new_vr == start_vr,
+                f"视口内点击 {target} → vr 应保持 {start_vr}，实际 {new_vr}")
+    # 点击视口下方 → 最小滚动到目标刚好进入视口底部
+    target = start_vr + view
+    new_vr = _select_row_ensure_visible(start_vr, target, total, view)
+    t.check(new_vr == target - view + 1,
+            f"下方点击 {target} → 最小滚动 vr={new_vr}")
+    # 点击视口上方 → 滚到目标在最顶部
+    target = start_vr - 5
+    new_vr = _select_row_ensure_visible(start_vr, target, total, view)
+    t.check(new_vr == target,
+            f"上方点击 {target} → 最小滚动 vr={new_vr}")
+
+
+@suite.test("显式定位 — 目标行居中")
+def _(t, flags):
+    """验证 scrollToEntry / 跳转命令使用居中路径（区别于普通点击）"""
+    total = 1000
+    view = 22
+    start_vr = 0
+    target = 500
+    new_vr = _select_row_center(start_vr, target, total, view)
+    # 目标行应位于视口中间附近
+    t.check(target - new_vr == view // 2,
+            f"居中：target={target} vr={new_vr} 目标行位于中间")
+    t.check(new_vr <= target < new_vr + view,
+            f"居中后目标行仍可见 [{new_vr},{new_vr+view})")
+    # 靠近末尾时居中不越界
+    target = total - 1
+    new_vr = _select_row_center(start_vr, target, total, view)
+    t.check(new_vr == total - view,
+            f"末尾居中钳制 vr={new_vr} == {total-view}")
+    # 顶部时钳制到 0
+    target = 0
+    new_vr = _select_row_center(start_vr, target, total, view)
+    t.check(new_vr == 0, f"顶部居中钳制 vr={new_vr}")
+
+    # 两路径对比：同一 target，居中滚动距离远大于普通点击
+    start_vr = 100
+    target = 300
+    diff_center = abs(_select_row_center(start_vr, target, total, view) - start_vr)
+    diff_click = abs(_select_row_ensure_visible(start_vr, target, total, view) - start_vr)
+    t.check(diff_center >= diff_click,
+            f"居中滚动({diff_center}) >= 点击最小滚动({diff_click})")
+
+
+@suite.test("grid.selectRow 支持 center 选项")
+def _(t, flags):
+    """验证 grid.js 源码中 selectRow 区分 center/普通选择"""
+    with open(GRID_PATH, 'r', encoding='utf-8') as f:
+        src = f.read()
+    t.check('selectRow(displayIndex, opts)' in src,
+            "selectRow 接受 opts 参数")
+    t.check('opts.center' in src,
+            "selectRow 支持 center 选项")
+    t.check('this.selectRow(idx, { center: true })' in src,
+            "scrollToEntry 使用居中定位")
+    t.check("row.addEventListener('click', () => {\n      this.selectRow(displayIndex);" in src
+            or "row.addEventListener('click', () => {\n      this.selectRow(displayIndex);\n    });" in src,
+            "行点击使用普通选中（不居中）")
+    # 不再无条件居中：selectRow 体内不含旧的无条件居中注释
+    t.check('计算居中位置，确保目标行始终可见' not in src,
+            "已移除点击即居中的逻辑")

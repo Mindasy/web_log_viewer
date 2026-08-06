@@ -723,16 +723,29 @@ const LogGrid = {
     return this._escapeDiv.innerHTML;
   },
 
-  selectRow(displayIndex) {
+  selectRow(displayIndex, opts) {
     if (displayIndex < 0 || displayIndex >= this.totalRows) return;
     this.selectedIndex = displayIndex;
+    opts = opts || {};
+    const viewRows = Math.max(1, Math.ceil(this.gridBody.clientHeight / this.rowHeight));
 
-    // 基于视口实际可见行数（不含 buffer）计算居中位置，确保目标行始终可见
-    const viewportRows = Math.max(1, Math.ceil(this.gridBody.clientHeight / this.rowHeight));
-    const centerOffset = Math.floor(viewportRows / 2);
-    const targetVR = Math.max(0, Math.min(displayIndex - centerOffset, this.totalRows - viewportRows));
+    if (opts.center) {
+      // 显式定位（时间线点击、书签/搜索跳转等）：目标行居中显示
+      const centerOffset = Math.floor(viewRows / 2);
+      const targetVR = Math.max(0, Math.min(displayIndex - centerOffset, this.totalRows - viewRows));
+      this._virtualRow = targetVR;
+    } else {
+      // 普通选择（点击/键盘）：保持当前视口，仅当目标行不可见时最小滚动
+      // 避免点击后整行跳到中间，导致双击（书签等）落在错误的行上
+      const first = this._virtualRow;
+      if (displayIndex < first) {
+        this._virtualRow = displayIndex;
+      } else if (displayIndex >= first + viewRows) {
+        this._virtualRow = displayIndex - viewRows + 1;
+      }
+      this._virtualRow = Math.max(0, Math.min(this._virtualRow, Math.max(0, this.totalRows - viewRows)));
+    }
 
-    this._virtualRow = targetVR;
     this.render();
     App.updateCurrentRow();
     if (displayIndex >= 0 && displayIndex < this.entries.length) {
@@ -744,7 +757,7 @@ const LogGrid = {
     if (!entry) return;
     const idx = this.entries.findIndex(e => e.index === entry.index);
     if (idx >= 0) {
-      this.selectRow(idx);
+      this.selectRow(idx, { center: true });
       return true;
     }
     // 条目被当前过滤条件排除
