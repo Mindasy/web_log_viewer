@@ -1220,6 +1220,8 @@ const App = {
     LogParser.clear();
     this.bookmarks = [];
     LogFilter.resetSearch();
+    // 清除视图栈与面包屑，避免残留视图引用已清除的数据
+    ViewManager.clear();
     LogGrid.setData([]);
     this.closeDetail();
     document.getElementById('status-file').textContent = '未打开文件';
@@ -1230,6 +1232,7 @@ const App = {
     filesPanel.classList.remove('expanded');
     document.getElementById('files-list').innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:11px">暂无文件</div>';
     this.updateButtonStates();
+    this._updateSaveViewButton();
     Utils.showToast('已清除所有日志');
   },
 
@@ -1820,7 +1823,7 @@ const App = {
         Utils.showToast('已到边界，无法继续偏移', 'error');
         return;
       }
-      LogGrid.selectRow(targetIdx);
+      LogGrid.selectRow(targetIdx, { center: true });
       const dir = offset > 0 ? '后' : '前';
       const entry = LogGrid.entries[targetIdx];
       const origLine = entry ? entry.index + 1 : '?';
@@ -1843,7 +1846,7 @@ const App = {
         this.updateSearchStats();
         Utils.showToast(`已跳转到第 ${num} 个搜索结果（原始行号 ${entry.index + 1}）`, 'success');
       } else {
-        LogGrid.selectRow(num - 1);
+        LogGrid.selectRow(num - 1, { center: true });
         const entry = LogGrid.entries[num - 1];
         Utils.showToast(`已跳转到视图第 ${num} 行（原始行号 ${entry ? entry.index + 1 : '?'}）`, 'success');
       }
@@ -2255,9 +2258,12 @@ const App = {
 
     // 刷新视图
     LogFilter.state.sourceFileFilter = '';
+    // 数据已变更，清除过期视图（视图引用的条目可能已被移除）
+    ViewManager.clear();
     LogGrid.setData(LogParser.entries);
     this.updateFileInfo();
     this.renderFilesList();
+    this._updateSaveViewButton();
     Utils.showToast(`已关闭文件: ${fileName}`);
   },
 
@@ -2299,9 +2305,12 @@ const App = {
     }
 
     LogFilter.state.sourceFileFilter = '';
+    // 数据已变更，清除过期视图
+    ViewManager.clear();
     LogGrid.setData(LogParser.entries);
     this.updateFileInfo();
     this.renderFilesList();
+    this._updateSaveViewButton();
     Utils.showToast(`已关闭: ${archiveName}`);
   },
 

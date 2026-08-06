@@ -394,6 +394,291 @@ def _(t, flags):
             t.fail(f"缺少集成: {desc}")
 
 
+@suite.test("视图与清除/重新加载联动")
+def _(t, flags):
+    """回归：清除、关闭文件等菜单操作后，视图栈必须一并清除，
+    避免残留视图引用已清除/移除的数据导致搜索基于过期视图过滤。"""
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    js = open(app_path, encoding='utf-8').read()
+
+    # 清除必须清空视图栈
+    clear_idx = js.find('clearAll() {')
+    if clear_idx >= 0:
+        seg = js[clear_idx:clear_idx + 800]
+        if 'ViewManager.clear()' in seg:
+            t.ok("清除 (clearAll) 会清空视图栈与面包屑")
+        else:
+            t.fail("清除 (clearAll) 未清空视图栈")
+        if '_updateSaveViewButton()' in seg:
+            t.ok("清除后更新保存视图按钮可见性")
+        else:
+            t.fail("清除后未更新保存视图按钮")
+    else:
+        t.fail("未找到 clearAll")
+
+    # 关闭文件（仍有剩余文件时）必须清空过期视图
+    close_idx = js.find('closeFile(fileName) {')
+    if close_idx >= 0:
+        seg = js[close_idx:close_idx + 2000]
+        if 'ViewManager.clear()' in seg:
+            t.ok("关闭文件后清除过期视图")
+        else:
+            t.fail("关闭文件后未清除过期视图")
+    else:
+        t.fail("未找到 closeFile")
+
+    # 关闭档案（仍有剩余文件时）必须清空过期视图
+    arch_idx = js.find('closeArchive(archiveName) {')
+    if arch_idx >= 0:
+        seg = js[arch_idx:arch_idx + 2000]
+        if 'ViewManager.clear()' in seg:
+            t.ok("关闭档案后清除过期视图")
+        else:
+            t.fail("关闭档案后未清除过期视图")
+    else:
+        t.fail("未找到 closeArchive")
+
+    # 重新加载路径：onDataLoaded 清除视图（既有集成点）
+    if 'ViewManager.clear()' in js:
+        t.ok("重新加载/解析路径清除视图 (onDataLoaded)")
+    else:
+        t.fail("重新加载路径缺少 ViewManager.clear()")
+
+
+@suite.test("ViewManager.clear 同步过滤输入框")
+def _(t, flags):
+    """回归：清除视图后过滤输入框（搜索/PID/线程）必须与 state 同步清空，
+    避免界面残留旧过滤文本。"""
+    vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
+    js = open(vm_path, encoding='utf-8').read()
+
+    clear_idx = js.find('clear() {')
+    if clear_idx >= 0:
+        seg = js[clear_idx:clear_idx + 400]
+        if '_syncFilterInputs' in seg and "pidFilter: ''" in seg:
+            t.ok("clear() 同步清空过滤输入框")
+        else:
+            t.fail("clear() 未同步过滤输入框")
+    else:
+        t.fail("未找到 ViewManager.clear")
+
+    # clear() 后 isInView 应为 false（视图栈清空 + currentIndex=-1）
+    if 'this.stack = []' in js and 'this.currentIndex = -1' in js:
+        t.ok("clear() 清空栈并回到全局视图")
+    else:
+        t.fail("clear() 未完整清空视图状态")
+
+
+@suite.test("ViewManager 视图级 ✕ 关闭")
+def _(t, flags):
+    """验证仅当前选中视图显示 ✕：关闭该视图及之后的所有视图（栈截断）"""
+    vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
+    js = open(vm_path, encoding='utf-8').read()
+    css = open(os.path.join(ROOT, 'css', 'style.css'), encoding='utf-8').read()
+
+    # 视图 ✕ 关闭按钮（仅当前选中视图渲染）
+    if 'vb-close-single' in js:
+        t.ok("视图项支持 ✕ 关闭按钮")
+    else:
+        t.fail("缺少视图级 ✕ 按钮")
+
+    # 仅当前选中视图渲染 ✕（active 条件）
+    if "active ? `<span class=\"vb-close-single\"" in js or 'active ? ' in js:
+        t.ok("仅当前选中视图显示 ✕")
+    else:
+        t.fail("✕ 未按选中状态渲染")
+
+    # 视图 ✕ 阻止冒泡（避免同时触发跳转）
+    if 'e.stopPropagation()' in js:
+        t.ok("视图 ✕ 阻止冒泡到跳转")
+    else:
+        t.fail("视图 ✕ 未阻止冒泡")
+
+    # closeViewAt 截断栈：移除该视图及之后
+    if 'closeViewAt(i) {' in js and 'this.stack.slice(0, i)' in js:
+        t.ok("closeViewAt 截断视图栈 (关闭该视图及之后)")
+    else:
+        t.fail("closeViewAt 未截断视图栈")
+
+    # 关闭全部视图（最右侧 ✕ → clear）
+    if 'vb-close-all' in js and 'this.clear()' in js:
+        t.ok("最右侧 ✕ 关闭全部视图")
+    else:
+        t.fail("缺少关闭全部视图按钮")
+
+    # CSS 样式：视图级 ✕ + 关闭全部 ✕
+    if '.vb-close-single {' in css and '.vb-close-all {' in css:
+        t.ok("✕ 按钮样式齐全")
+    else:
+        t.fail("✕ 按钮样式缺失")
+
+
+@suite.test("ViewManager 创建视图清空搜索")
+def _(t, flags):
+    """验证创建新视图后清空当前搜索内容（视图数据已固化过滤状态）"""
+    vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
+    js = open(vm_path, encoding='utf-8').read()
+
+    push_idx = js.find('pushView(name, entries, filterSnapshot) {')
+    if push_idx < 0:
+        t.fail("未找到 pushView")
+        return
+    seg = js[push_idx:push_idx + 1100]
+
+    if "LogFilter.state.searchText = ''" in seg:
+        t.ok("创建视图后清空搜索状态")
+    else:
+        t.fail("创建视图后未清空搜索状态")
+
+    if 'LogFilter.resetSearch()' in seg:
+        t.ok("重置搜索结果")
+    else:
+        t.fail("未重置搜索结果")
+
+    if 'App.setViewData(this.stack[this.currentIndex].entries)' in seg:
+        t.ok("创建后直接显示视图数据")
+    else:
+        t.fail("创建后未同步视图数据")
+
+
+@suite.test("ViewManager 视图项复制")
+def _(t, flags):
+    """验证视图项支持复制名称（悬停显示复制按钮）"""
+    vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
+    js = open(vm_path, encoding='utf-8').read()
+    css = open(os.path.join(ROOT, 'css', 'style.css'), encoding='utf-8').read()
+
+    # 每个视图项渲染复制按钮
+    if 'vb-copy' in js:
+        t.ok("视图项渲染复制按钮")
+    else:
+        t.fail("缺少复制按钮渲染")
+
+    # 复制按钮阻止冒泡（避免触发跳转）
+    if "e.stopPropagation();\n        const v = this.stack[Number(btn.dataset.index)]" in js:
+        t.ok("复制按钮阻止冒泡并取视图名称")
+    else:
+        t.fail("复制按钮事件处理缺失")
+
+    # 复制到剪贴板（含降级方案）
+    if '_copyText(text)' in js and 'navigator.clipboard' in js:
+        t.ok("使用 Clipboard API 复制")
+    else:
+        t.fail("缺少复制实现")
+
+    if '_copyFallback' in js and 'document.execCommand' in js:
+        t.ok("提供降级复制方案")
+    else:
+        t.fail("缺少降级复制")
+
+    # CSS：复制按钮默认隐藏，悬停视图项时显示
+    if '.vb-copy {' in css and '.vb-crumb:hover .vb-copy {' in css:
+        t.ok("复制按钮悬停视图项时显示")
+    else:
+        t.fail("复制按钮样式缺失")
+
+
+@suite.test("ViewManager closeViewAt 截断逻辑正确性")
+def _(t, flags):
+    """Node.js 执行验证 closeViewAt 关闭该视图及之后所有视图的语义"""
+    vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
+    js = open(vm_path, encoding='utf-8').read()
+    body = _extract_js_func_body(js, 'closeViewAt(i) {')
+    if not body:
+        t.fail("无法提取 closeViewAt")
+        return
+
+    test_code = """
+const obj = {
+  stack: [],
+  currentIndex: -1,
+  applied: null,
+  _resetToGlobal() { this.stack = []; this.currentIndex = -1; },
+  _applyView() { if (this.currentIndex >= 0 && this.stack[this.currentIndex]) this.applied = this.stack[this.currentIndex].name; },
+  renderBreadcrumb() {},
+  closeViewAt: function(i) {
+%s
+  }
+};
+let pass = 0, fail = 0;
+function check(cond, msg) {
+  if (cond) pass++;
+  else { fail++; console.log('FAIL: ' + msg); }
+}
+function setup(names, idx) {
+  obj.stack = names.map(n => ({ name: n }));
+  obj.currentIndex = idx;
+  obj.applied = null;
+}
+// 栈 [V1,V2,V3]，当前 V3 → 关闭 V2 后只剩 V1，落到 V1
+setup(['V1','V2','V3'], 2);
+obj.closeViewAt(1);
+check(obj.stack.length === 1 && obj.stack[0].name === 'V1', '关V2后栈=[V1] 实际=' + JSON.stringify(obj.stack.map(v=>v.name)));
+check(obj.currentIndex === 0 && obj.applied === 'V1', '当前落到V1 实际=' + obj.currentIndex + '/' + obj.applied);
+// 栈 [V1,V2,V3]，当前 V3 → 关闭 V3 后栈=[V1,V2]，落到 V2
+setup(['V1','V2','V3'], 2);
+obj.closeViewAt(2);
+check(obj.stack.length === 2 && obj.stack[1].name === 'V2', '关V3后栈=[V1,V2]');
+check(obj.currentIndex === 1 && obj.applied === 'V2', '当前落到V2 实际=' + obj.currentIndex + '/' + obj.applied);
+// 栈 [V1,V2,V3]，当前 V3 → 关闭 V1 后栈空，回全局
+setup(['V1','V2','V3'], 2);
+obj.closeViewAt(0);
+check(obj.stack.length === 0 && obj.currentIndex === -1, '关V1后栈空回全局 实际=' + obj.stack.length + '/' + obj.currentIndex);
+// 栈 [V1]，当前 V1 → 关闭 V1 后回全局
+setup(['V1'], 0);
+obj.closeViewAt(0);
+check(obj.stack.length === 0 && obj.currentIndex === -1, '关唯一视图后回全局');
+// 越界关闭不生效
+setup(['V1','V2'], 1);
+obj.closeViewAt(5);
+check(obj.stack.length === 2 && obj.currentIndex === 1, '越界关闭无效 实际=' + obj.stack.length + '/' + obj.currentIndex);
+// 当前在全局（-1），关闭 V1 后栈空，仍全局
+setup(['V1','V2'], -1);
+obj.closeViewAt(0);
+check(obj.stack.length === 0 && obj.currentIndex === -1, '全局视图下关闭底层视图');
+console.log('PASS:' + pass + ' FAIL:' + fail);
+"""
+    test_code = test_code % body
+    proc = subprocess.run(['node', '-e', test_code], capture_output=True, text=True, timeout=10)
+
+    if proc.returncode != 0:
+        t.fail(f"Node.js 执行失败: {proc.stderr}")
+        return
+    output = proc.stdout.strip()
+    if 'FAIL:0' in output:
+        m = re.search(r'PASS:(\d+)', output)
+        t.ok(f"closeViewAt 截断逻辑正确 ({m.group(1)} 个断言)")
+    else:
+        for line in output.split('\n'):
+            if line.startswith('FAIL:'):
+                t.fail(line)
+        t.fail("closeViewAt 部分断言失败")
+
+
+@suite.test("ViewManager 关闭全部视图退出界面")
+def _(t, flags):
+    """验证关闭全部视图后：栈清空、面包屑隐藏（退出视图界面）"""
+    vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
+    js = open(vm_path, encoding='utf-8').read()
+
+    if 'this.clear()' in js and 'vb-close-all' in js:
+        t.ok("关闭全部视图调用 clear()")
+    else:
+        t.fail("关闭全部未调用 clear()")
+
+    # clear() 清空栈 → renderBreadcrumb 隐藏面包屑（stack.length===0 → display none）
+    if 'this.stack = []' in js and 'this.renderBreadcrumb()' in js:
+        t.ok("clear() 清空栈并重渲染面包屑")
+    else:
+        t.fail("clear() 未清空栈/重渲染")
+
+    # 退出视图界面：面包屑在栈空时隐藏
+    if 'container.style.display = \'none\'' in js:
+        t.ok("栈空时隐藏面包屑（退出视图界面）")
+    else:
+        t.fail("栈空时未隐藏面包屑")
+
+
 # ===== HTML 脚本加载顺序验证 =====
 
 @suite.test("脚本加载顺序")
@@ -450,10 +735,18 @@ def _(t, flags):
         depth_match = re.search(r'MAX_DEPTH:\s*(\d+)', js)
         if depth_match:
             depth = int(depth_match.group(1))
-            if depth <= 10:
+            if depth == 10:
+                t.ok(f"视图深度限制 = {depth} (支持最多10层)")
+            elif depth <= 10:
                 t.ok(f"视图深度限制 = {depth} (合理)")
             else:
                 t.fail(f"视图深度限制过大: {depth}")
+
+    # 超过上限时给用户提示
+    if '已达到最大视图深度' in js and 'Utils.showToast' in js:
+        t.ok("超过最大深度时提示用户")
+    else:
+        t.fail("缺少超过最大深度的用户提示")
 
     # 空栈处理
     if 'stack.length === 0' in js or 'stack.length==0' in js:
