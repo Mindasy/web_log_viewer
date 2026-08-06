@@ -110,14 +110,17 @@ def _(t, flags):
 
 @suite.test("CI 配置 — actions 使用 Node 24 版本（避免 Node 20 弃用告警）")
 def _(t, flags):
-    """checkout / setup-python / action-gh-release 均需使用基于 Node 24 的版本，
-    避免 GitHub Actions 的 Node 20 弃用告警"""
+    """全部 actions 均需使用基于 Node 24 的版本，避免 Node 20 弃用告警"""
     pr = open(os.path.join(ROOT, '.github', 'workflows', 'pr.yml'), encoding='utf-8').read()
     rel = open(os.path.join(ROOT, '.github', 'workflows', 'release.yml'), encoding='utf-8').read()
     for wf, name in [(pr, 'pr.yml'), (rel, 'release.yml')]:
         t.check('checkout@v6' in wf, f"{name} checkout 使用 Node 24 版本 (@v6)")
         t.check('setup-python@v6' in wf, f"{name} setup-python 使用 Node 24 版本 (@v6)")
     t.check('action-gh-release@v3' in rel, "release.yml action-gh-release 使用 Node 24 版本 (@v3)")
+    # Pages 部署 actions（configure-pages / upload-pages-artifact / deploy-pages）
+    t.check('configure-pages@v6' in rel, "release.yml configure-pages 使用 Node 24 版本 (@v6)")
+    t.check('upload-pages-artifact@v5' in rel, "release.yml upload-pages-artifact 使用 Node 24 版本 (@v5)")
+    t.check('deploy-pages@v5' in rel, "release.yml deploy-pages 使用 Node 24 版本 (@v5)")
 
 
 @suite.test("CI 配置 — 安装 zsh 用于 zsh 脚本语法检查")
