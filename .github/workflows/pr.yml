@@ -12,14 +12,19 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
+
+      - name: 安装 zsh（用于 update-tool.zsh 语法检查）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
 
       - name: 运行全量验证（含重型 250w 行解析测试）
         run: |

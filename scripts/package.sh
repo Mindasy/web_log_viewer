@@ -81,6 +81,7 @@ tar -czf "$PACKAGE_FILE" \
     --exclude='*.log' \
     --exclude='.DS_Store' \
     --exclude='.github' \
+    --exclude='tools' \
     index.html \
     server.py \
     css/ \
