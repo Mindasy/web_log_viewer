@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+import sys
 
 from test_runner import ROOT, TestSuite
 
@@ -185,6 +186,12 @@ def _(t, flags):
     else:
         t.fail("缺少 timeline-method-search 方法搜索框")
 
+    # issue #55：方法排序切换按钮
+    if 'id="btn-timeline-method-sort"' in html:
+        t.ok("btn-timeline-method-sort 排序切换按钮存在")
+    else:
+        t.fail("缺少 btn-timeline-method-sort 排序按钮")
+
 
 # ===== JS 文件完整性 =====
 
@@ -194,6 +201,7 @@ def _(t, flags):
     new_files = [
         ('js/thread_timeline.js', 'ThreadTimeline'),
         ('js/view_manager.js', 'ViewManager'),
+        ('js/callstack.js', 'CallStack'),
     ]
 
     for rel, obj_name in new_files:
@@ -937,6 +945,24 @@ def _(t, flags):
     else:
         t.fail("缺少 Alt+点击打开线程详情")
 
+    # issue #55 按调用顺序显示：调用序排序 / 调用序列 / 排序切换 / 序号标注
+    if '_callOrder' in js:
+        t.ok("方法按首次调用时间排序（调用序）")
+    else:
+        t.fail("缺少调用序排序")
+    if '_callSequence' in js:
+        t.ok("生成调用序列（A → B → C）")
+    else:
+        t.fail("缺少调用序列")
+    if '_toggleMethodSort' in js:
+        t.ok("排序切换（调用序 ⇄ 字母序）")
+    else:
+        t.fail("缺少排序切换")
+    if 'callIdx' in js and '调用序' in js:
+        t.ok("泳道标注真实调用序号")
+    else:
+        t.fail("缺少调用序号标注")
+
     # 详情模式下点击方法标签过滤
     if 'sourceFilter' in js:
         t.ok("点击方法标签设置 sourceFilter")
@@ -1275,6 +1301,398 @@ def _(t, flags):
         t.ok("首次打开时间线操作引导")
     else:
         t.fail("缺少首次操作引导")
+
+
+@suite.test("时间线-调用栈视图（issue #56）")
+def _(t, flags):
+    """指定函数调用栈文件，按调用栈树显示日志：解析/匹配计数/节点过滤"""
+    html_path = os.path.join(ROOT, 'index.html')
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    cs_path = os.path.join(ROOT, 'js', 'callstack.js')
+    app_path = os.path.join(ROOT, 'js', 'app.js')
+    html = open(html_path, encoding='utf-8').read()
+    css = open(css_path, encoding='utf-8').read()
+    cs = open(cs_path, encoding='utf-8').read()
+    app_js = open(app_path, encoding='utf-8').read()
+
+    # HTML：调用栈 tab / 视图 / 加载按钮 / 文件输入 / 脚本引入
+    if 'data-mode="callstack"' in html:
+        t.ok("时间线模式含调用栈 tab")
+    else:
+        t.fail("缺少调用栈 tab")
+    if 'id="callstack-view"' in html and 'id="btn-callstack-load"' in html:
+        t.ok("调用栈视图与加载按钮存在")
+    else:
+        t.fail("缺少调用栈视图/加载按钮")
+    if 'id="callstack-file-input"' in html:
+        t.ok("调用栈文件输入存在")
+    else:
+        t.fail("缺少调用栈文件输入")
+    if 'js/callstack.js' in html:
+        t.ok("已引入 callstack.js")
+    else:
+        t.fail("未引入 callstack.js")
+
+    # CSS 样式
+    if 'callstack-tree' in css and '.cs-node' in css:
+        t.ok("调用栈树样式定义")
+    else:
+        t.fail("缺少调用栈树样式")
+
+    # callstack.js 模块功能
+    for pat, desc in [
+        ('parse(', '解析调用栈文本'),
+        ('_computeCounts', '日志匹配计数'),
+        ('selectNode', '节点过滤日志'),
+        ('loadFile', '加载调用栈文件'),
+        ('_getPath', '调用路径提取'),
+        ('_descend', '缩进跳跃下探'),
+    ]:
+        if pat in cs:
+            t.ok(f"CallStack {desc}")
+        else:
+            t.fail(f"缺少 CallStack {desc}")
+
+    # app.js 初始化
+    if 'CallStack.init()' in app_js:
+        t.ok("app.js 初始化 CallStack")
+    else:
+        t.fail("app.js 未初始化 CallStack")
+
+    # tab 切换逻辑处理调用栈模式
+    tt_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    tt = open(tt_path, encoding='utf-8').read()
+    if "'callstack'" in tt and 'CallStack.activate()' in tt:
+        t.ok("线程时间线 tab 切换处理调用栈模式")
+    else:
+        t.fail("缺少调用栈模式切换处理")
+
+    # 调用栈模式占满面板：activate 隐藏 canvas/hint，deactivate 恢复（加载入口可见）
+    if 'canvas.style.display' in cs and "timeline-canvas" in cs and "timeline-hint" in cs:
+        t.ok("调用栈模式隐藏 canvas/提示条，视图占满面板")
+    else:
+        t.fail("调用栈模式未隐藏 canvas/提示条")
+    if "canvas.style.display = ''" in cs:
+        t.ok("退出调用栈模式恢复 canvas")
+    else:
+        t.fail("退出调用栈模式未恢复 canvas")
+
+    # 混合格式（缩进树 + 箭头链）解析：树优先，箭头链不干扰
+    if 'hasIndent' in cs and '箭头链行仅作补充' in cs:
+        t.ok("混合格式解析：缩进树优先，箭头链不干扰")
+    else:
+        t.fail("缺少混合格式解析处理")
+
+    # 流程图模式：切换按钮 / 泳道布局 / 日志详情面板（基于日志构建，无需调用栈文件）
+    if 'toggleViewMode' in cs and 'renderFlow' in cs:
+        t.ok("调用栈支持树状⇄流程图切换")
+    else:
+        t.fail("缺少流程图模式切换")
+    if '_buildFlowGroups' in cs and '_segTime' in cs:
+        t.ok("流程图基于日志构建（时间→进程→线程→函数段）")
+    else:
+        t.fail("缺少流程图日志构建逻辑")
+    if 'callstack-flow-detail' in html and 'cs-detail-item' in css:
+        t.ok("流程图日志详情面板")
+    else:
+        t.fail("缺少流程图日志详情面板")
+    if '_onFlowSegClick' in cs and 'showSegDetail' in cs:
+        t.ok("流程图函数段点击展示日志列表")
+    else:
+        t.fail("缺少流程图函数段日志展示")
+    if '.cs-flow-seg' in css and '.cs-flow-arrow' in css:
+        t.ok("流程图函数段与箭头样式")
+    else:
+        t.fail("缺少流程图函数段/箭头样式")
+    # 点击调用栈视图不更新背景日志（selectNode 仅高亮、流程图点击仅展示面板）
+    if "仅高亮选中，不更新背景日志" in cs:
+        t.ok("树状 selectNode 不再过滤背景日志")
+    else:
+        t.fail("树状 selectNode 仍过滤背景日志")
+    if "点击不更新背景日志" in cs:
+        t.ok("流程图函数段点击不更新背景日志")
+    else:
+        t.fail("流程图函数段点击仍过滤背景日志")
+    # 流程图渲染容器：普通 div 滚动容器（避免 SVG 内嵌 HTML 导致尺寸塌陷）
+    if 'callstack-flow-canvas' in html and '.cs-flow-scroll' in css:
+        t.ok("流程图使用 div 滚动容器（修复 SVG 尺寸塌陷）")
+    else:
+        t.fail("流程图缺少 div 滚动容器")
+
+    # 流程图搜索函数名
+    if 'cs-flow-search' in html and '_flowFilter' in cs:
+        t.ok("流程图支持函数名搜索")
+    else:
+        t.fail("缺少流程图搜索框/过滤逻辑")
+    if '_jumpToNextHit' in cs and 'search-hit' in css:
+        t.ok("搜索命中高亮与 Enter 跳转下一处")
+    else:
+        t.fail("缺少搜索跳转逻辑")
+    if 'cs-flow-search-count' in html:
+        t.ok("搜索结果显示命中计数")
+    else:
+        t.fail("缺少搜索计数显示")
+
+    # 流程图状态标注（ERROR/WARN 等，人性化配色）
+    for pat, desc in [
+        ('_aggregateLevel', '统计函数段日志级别分布'),
+        ('_segStatus', '计算函数段状态（fatal/error/warn/info/trace）'),
+        ('_segStatusBadge', '状态徽标（ERROR×N）'),
+    ]:
+        if pat in cs:
+            t.ok(f"状态标注支持 {desc}")
+        else:
+            t.fail(f"缺少状态标注 {desc}")
+    for sel in ['status-error', 'status-warn', 'status-fatal', '.cs-seg-bar', '.cs-seg-status', '.cs-seg-badge']:
+        if sel in css:
+            t.ok(f"状态标注样式 {sel}")
+        else:
+            t.fail(f"缺少状态标注样式 {sel}")
+    if '搜索过滤函数段' in html or '搜索过滤函数段' in cs:
+        t.ok("流程图提示含搜索操作说明")
+    else:
+        t.fail("缺少搜索操作提示")
+
+
+@suite.test("调用栈提取工具（issue #57）")
+def _(t, flags):
+    """项目函数调用栈提取工具：解析源码、生成调用栈文件、与 callstack.js 格式兼容"""
+    tool_path = os.path.join(ROOT, 'tools', 'callstack', 'extract_callstack.py')
+    demo_path = os.path.join(ROOT, 'test', 'samples', 'callstack', 'callstack_demo.txt')
+    src_dir = os.path.join(ROOT, 'test', 'samples', 'callstack', 'sample_cpp_src')
+    if not os.path.exists(tool_path):
+        t.fail("tools/callstack/extract_callstack.py 不存在")
+        return
+    tool = open(tool_path, encoding='utf-8').read()
+
+    # 工具能力
+    for pat, desc in [
+        ('DEF_RE', '函数定义识别（C/C++/Java）'),
+        ('CALL_RE', '函数调用识别'),
+        ('extract_body', '函数体提取（大括号配对）'),
+        ('strip_comments', '注释剥离'),
+        ('--entry', '入口函数参数'),
+        ('--lang', '语言指定参数'),
+        ('--output', '输出文件参数'),
+        ('--no-arrow', '箭头链开关'),
+    ]:
+        if pat in tool:
+            t.ok(f"工具支持 {desc}")
+        else:
+            t.fail(f"工具缺少 {desc}")
+
+    # 示例调用栈文件存在
+    if os.path.exists(demo_path):
+        t.ok("test/samples/callstack/callstack_demo.txt 示例调用栈文件存在")
+    else:
+        t.fail("缺少 test/samples/callstack/callstack_demo.txt")
+
+    # 示例源码目录存在
+    if os.path.isdir(src_dir):
+        t.ok("test/samples/callstack/sample_cpp_src 示例源码目录存在")
+    else:
+        t.fail("缺少调用栈测试源码目录")
+
+    # 端到端：运行工具生成临时文件，验证输出包含调用树与箭头链
+    tmp_out = os.path.join(ROOT, 'test', 'tmp_cs_test.txt')
+    try:
+        proc = subprocess.run(
+            [sys.executable, tool_path, src_dir, '--output', tmp_out],
+            capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            t.fail(f"工具运行失败: {proc.stderr[:200]}")
+        else:
+            content = open(tmp_out, encoding='utf-8').read()
+            if '调用树' in content and 'main' in content:
+                t.ok("工具能生成调用树文件")
+            else:
+                t.fail("工具输出缺少调用树/main")
+            if ' <- ' in content:
+                t.ok("工具输出包含箭头链调用边")
+            else:
+                t.fail("工具输出缺少箭头链")
+    finally:
+        if os.path.exists(tmp_out):
+            os.remove(tmp_out)
+
+
+@suite.test("调用栈三通道工具（issue #57 增强）")
+def _(t, flags):
+    """静态增强（异步/回调/函数指针）+ 动态 perf + Doxygen 对接三通道"""
+
+    # 1. extract_callstack.py 增强能力
+    tool = open(os.path.join(ROOT, 'tools', 'callstack', 'extract_callstack.py'), encoding='utf-8').read()
+    for pat, desc in [
+        ('ASYNC_API_RE', '异步 API 识别（std::thread/async/pthread_create）'),
+        ('CALLBACK_API_RE', '回调注册 API 识别'),
+        ('FNPTR_ALIAS_RE', '函数指针别名追踪'),
+        ('STDFUNC_RE', 'std::function 引用识别'),
+    ]:
+        if pat in tool:
+            t.ok(f"静态工具支持 {desc}")
+        else:
+            t.fail(f"静态工具缺少 {desc}")
+
+    # 2. 端到端：对含函数指针/异步的源码，异步与回调边应被提取
+    ability_dir = os.path.join(ROOT, 'test', 'samples', 'callstack', 'cs_ability_test')
+    if os.path.isdir(ability_dir):
+        tmp = os.path.join(ROOT, 'test', 'tmp_cs_ability.txt')
+        try:
+            proc = subprocess.run(
+                [sys.executable, os.path.join(ROOT, 'tools', 'callstack', 'extract_callstack.py'),
+                 ability_dir, '--output', tmp],
+                capture_output=True, text=True, timeout=30)
+            content = open(tmp, encoding='utf-8').read() if proc.returncode == 0 else ''
+            if 'launchAsync <- asyncWorker' in content:
+                t.ok("异步回调边被提取（launchAsync → asyncWorker）")
+            else:
+                t.fail("异步回调边未提取")
+            if 'useFunctionPointer <- handlerImpl' in content:
+                t.ok("函数指针别名调用边被提取")
+            else:
+                t.fail("函数指针别名边未提取")
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    else:
+        t.fail("缺少 test/samples/callstack/cs_ability_test 测试源码")
+
+    # 3. perf 动态转换脚本
+    perf_script = os.path.join(ROOT, 'tools', 'callstack', 'perf_to_callstack.py')
+    if os.path.exists(perf_script):
+        t.ok("tools/callstack/perf_to_callstack.py 存在")
+        # 用模拟 folded 数据端到端验证
+        tmp_folded = os.path.join(ROOT, 'test', 'tmp_folded.txt')
+        tmp_out = os.path.join(ROOT, 'test', 'tmp_perf_out.txt')
+        try:
+            with open(tmp_folded, 'w', encoding='utf-8') as f:
+                f.write('main;launchAsync;worker 5\nmain;directB;directA 2\n')
+            proc = subprocess.run(
+                [sys.executable, perf_script, '--folded', tmp_folded, '--output', tmp_out],
+                capture_output=True, text=True, timeout=30)
+            content = open(tmp_out, encoding='utf-8').read() if proc.returncode == 0 else ''
+            if 'launchAsync' in content and 'worker' in content and 'launchAsync <- worker' in content:
+                t.ok("perf folded → 调用栈文件转换正常")
+            else:
+                t.fail("perf folded 转换失败")
+        finally:
+            for p in (tmp_folded, tmp_out):
+                if os.path.exists(p):
+                    os.remove(p)
+        # perf script 格式解析
+        perf_demo = os.path.join(ROOT, 'test', 'samples', 'callstack', 'perf_demo.script')
+        if os.path.exists(perf_demo):
+            tmp_out2 = os.path.join(ROOT, 'test', 'tmp_perf_out2.txt')
+            try:
+                proc = subprocess.run(
+                    [sys.executable, perf_script, '--perf-script', perf_demo, '--output', tmp_out2],
+                    capture_output=True, text=True, timeout=30)
+                content = open(tmp_out2, encoding='utf-8').read() if proc.returncode == 0 else ''
+                if 'handlerImpl' in content and 'useFunctionPointer <- handlerImpl' in content:
+                    t.ok("perf script 原始格式解析正常")
+                else:
+                    t.fail("perf script 解析失败")
+            finally:
+                if os.path.exists(tmp_out2):
+                    os.remove(tmp_out2)
+    else:
+        t.fail("缺少 tools/callstack/perf_to_callstack.py")
+
+    # 4. collect_perf_callstack.sh 一键采集脚本
+    if os.path.exists(os.path.join(ROOT, 'tools', 'callstack', 'collect_perf_callstack.sh')):
+        t.ok("tools/callstack/collect_perf_callstack.sh 存在")
+    else:
+        t.fail("缺少 collect_perf_callstack.sh")
+
+    # 5. Doxygen 对接脚本
+    doxy_script = os.path.join(ROOT, 'tools', 'callstack', 'doxygen_callstack.py')
+    if os.path.exists(doxy_script):
+        t.ok("tools/callstack/doxygen_callstack.py 存在")
+        doxy_demo = os.path.join(ROOT, 'test', 'samples', 'callstack', 'doxygen_demo')
+        if os.path.isdir(doxy_demo):
+            tmp_out3 = os.path.join(ROOT, 'test', 'tmp_doxy_out.txt')
+            try:
+                proc = subprocess.run(
+                    [sys.executable, doxy_script, '--dot', doxy_demo, '--output', tmp_out3],
+                    capture_output=True, text=True, timeout=30)
+                content = open(tmp_out3, encoding='utf-8').read() if proc.returncode == 0 else ''
+                if 'handleRequest' in content and 'main <- handleRequest' in content:
+                    t.ok("Doxygen dot → 调用栈文件转换正常")
+                else:
+                    t.fail("Doxygen dot 转换失败")
+            finally:
+                if os.path.exists(tmp_out3):
+                    os.remove(tmp_out3)
+        else:
+            t.fail("缺少 test/samples/callstack/doxygen_demo 示例")
+    else:
+        t.fail("缺少 doxygen_callstack.py")
+
+    # 6. 生成示例文件存在
+    for rel in ('test/samples/callstack/perf_callstack_demo.txt', 'test/samples/callstack/doxygen_callstack_demo.txt'):
+        if os.path.exists(os.path.join(ROOT, rel)):
+            t.ok(f"{rel} 示例文件存在")
+        else:
+            t.fail(f"缺少 {rel}")
+
+
+@suite.test("mini_cpp_demo 日志生成（与调用栈联动）")
+def _(t, flags):
+    """mini_cpp_demo 的 C++ 风格日志：函数名与调用栈文件节点一致，可端到端验证"""
+    gen_path = os.path.join(ROOT, 'scripts', 'generate_mini_cpp_demo_log.py')
+    if not os.path.exists(gen_path):
+        t.fail("scripts/generate_mini_cpp_demo_log.py 不存在")
+        return
+    gen = open(gen_path, encoding='utf-8').read()
+
+    # 脚本能力
+    for pat, desc in [
+        ('REQUEST_CHAIN', '请求调用链定义'),
+        ('STARTUP_CHAIN', '启动调用链定义'),
+        ('SHUTDOWN_CHAIN', '关闭调用链定义'),
+        ("'%Y-%m-%d %H:%M:%S,", 'bracket 时间戳格式输出'),
+    ]:
+        if pat in gen:
+            t.ok(f"日志生成支持 {desc}")
+        else:
+            t.fail(f"日志生成缺少 {desc}")
+
+    # 函数名覆盖 mini_cpp_demo 全部节点（确保调用栈节点可匹配）
+    for fn in ['main', 'handleRequest', 'getOrder', 'parseRequestLine', 'cacheGet',
+               'dbConnect', 'initServer', 'shutdown', 'dbClose', 'dbQuery',
+               'orderFromCache', 'orderFromDb', 'cacheSet', 'parseHeaders', 'checkVersion']:
+        if f"'{fn}'" in gen or f'"{fn}"' in gen:
+            t.ok(f"日志函数覆盖 {fn}")
+        else:
+            t.fail(f"日志函数缺少 {fn}")
+
+    # 端到端：运行脚本生成临时日志，验证 bracket 格式与函数分布
+    tmp_log = os.path.join(ROOT, 'test', 'tmp_mini.log')
+    try:
+        proc = subprocess.run(
+            [sys.executable, gen_path, '500', tmp_log],
+            capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            t.fail(f"日志生成失败: {proc.stderr[:200]}")
+            return
+        content = open(tmp_log, encoding='utf-8').read()
+        lines = [l for l in content.split('\n') if l.strip()]
+        # bracket 格式: [ts][LEVEL][pid][tid][TAG][source] msg
+        fmt_ok = all(re.match(
+            r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \+0800\]\[(TRACE|DEBUG|INFO|WARN|ERROR)\]\[\d+\]\[\d+\]\[[A-Z]+\]\[[a-z_]+\.cpp:[A-Za-z_]+:\d+\] ', l)
+            for l in lines)
+        if fmt_ok and len(lines) == 500:
+            t.ok("日志为合法 bracket 格式（file.cpp:func:line）")
+        else:
+            t.fail(f"日志格式不符（行数 {len(lines)}）")
+        # 函数名与调用栈一致
+        if 'main.cpp:handleRequest:18' in content and 'cache.cpp:cacheGet:5' in content:
+            t.ok("日志函数名与 mini_cpp_demo 调用栈节点一致")
+        else:
+            t.fail("日志函数名与调用栈节点不一致")
+    finally:
+        if os.path.exists(tmp_log):
+            os.remove(tmp_log)
 
 
 # ===== filter.js 高级过滤输入框绑定 =====

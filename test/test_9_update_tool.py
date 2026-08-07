@@ -108,6 +108,42 @@ def _(t, flags):
     t.check('weblogviewer.tar.gz' in rel or 'out.archive' in rel, "同时上传 tar.gz 归档")
 
 
+@suite.test("发布配置 — 调用栈工具作为 Release 附件（不打包进 tar.gz）")
+def _(t, flags):
+    """调用栈工具移到 tools/callstack/，不进入 weblogviewer.tar.gz，但随 Release 发布"""
+    rel = open(os.path.join(ROOT, '.github', 'workflows', 'release.yml'), encoding='utf-8').read()
+    pkg = open(os.path.join(ROOT, 'scripts', 'package.sh'), encoding='utf-8').read()
+
+    CSTOOLS = [
+        'extract_callstack.py',
+        'perf_to_callstack.py',
+        'collect_perf_callstack.sh',
+        'doxygen_callstack.py',
+    ]
+    # 1. 工具文件存在于 tools/callstack/
+    for name in CSTOOLS:
+        t.check(os.path.exists(os.path.join(ROOT, 'tools', 'callstack', name)),
+                f"tools/callstack/{name} 存在")
+    # 演示日志生成器仅测试使用，应留在 scripts/ 而非作为发布附件
+    t.check(os.path.exists(os.path.join(ROOT, 'scripts', 'generate_mini_cpp_demo_log.py')),
+            "scripts/generate_mini_cpp_demo_log.py 存在（测试用，仅 scripts 下）")
+    t.check('tools/callstack/generate_mini_cpp_demo_log.py' not in rel,
+            "release.yml 不发布 generate_mini_cpp_demo_log.py（仅测试用）")
+
+    # 2. 不打包进 tar.gz：package.sh 排除 tools/，且 tools/ 不作为打包输入
+    t.check("--exclude='tools'" in pkg or "--exclude='tools/' " in pkg or '--exclude=tools' in pkg,
+            "package.sh 排除 tools/（不打包）")
+    t.check("--exclude='tools'" in pkg, "package.sh --exclude='tools' 明确排除")
+
+    # 3. 随 Release 发布：release.yml 上传为附件
+    for name in CSTOOLS:
+        t.check(f'tools/callstack/{name}' in rel, f"release.yml 上传 tools/callstack/{name}")
+
+    # 4. tools/ 不参与 package.sh 打包清单
+    tar_m = re.search(r'tar -czf(.*?)index\.html', pkg, re.S)
+    t.check(tar_m is None or 'tools/' not in tar_m.group(1), "tools/ 不作为 tar 打包输入")
+
+
 @suite.test("CI 配置 — actions 使用 Node 24 版本（避免 Node 20 弃用告警）")
 def _(t, flags):
     """全部 actions 均需使用基于 Node 24 的版本，避免 Node 20 弃用告警"""

@@ -241,6 +241,7 @@
       <div class="timeline-mode-tabs">
         <button class="timeline-mode-btn active" data-mode="thread">线程</button>
         <button class="timeline-mode-btn" data-mode="level">级别</button>
+        <button class="timeline-mode-btn" data-mode="callstack">调用栈</button>
       </div>
       <select id="timeline-pid-select" class="timeline-pid-select">
         <option value="">全部进程</option>
@@ -249,6 +250,7 @@
       <button id="btn-timeline-back" style="display:none;" title="返回线程列表">← 返回</button>
       <span id="timeline-detail-label" style="display:none;"></span>
       <input type="text" id="timeline-method-search" style="display:none;" placeholder="搜索方法..." />
+      <button id="btn-timeline-method-sort" style="display:none;" title="切换方法排序（调用序/字母序）">⇅ 调用序</button>
       <div class="timeline-controls">
         <button id="btn-timeline-locate" title="在时间线中定位当前选中的日志行">📌 定位当前行</button>
         <button id="btn-timeline-zoom-in">🔍+</button>
@@ -263,6 +265,25 @@
     </div>
     <div id="timeline-hint">滚轮缩放 · 拖动平移 · Shift+滚轮左右平移 · 双击线程查看详情</div>
     <canvas id="timeline-canvas"></canvas>
+    <!-- 调用栈视图（调用栈模式时覆盖 canvas） -->
+    <div id="callstack-view" style="display:none;">
+      <div class="callstack-toolbar">
+        <button id="btn-callstack-load" title="加载函数调用栈文件（缩进树或 A &lt;- B &lt;- C 箭头链）">📂 加载调用栈文件</button>
+        <button id="btn-callstack-view-mode" title="切换树状 / 流程图展示" class="cs-view-toggle">▤ 流程图</button>
+        <span class="cs-flow-search-wrap" id="cs-flow-search-wrap" style="display:none;">
+          <input type="text" id="cs-flow-search" placeholder="🔍 搜索函数名" />
+          <span id="cs-flow-search-count" class="cs-flow-search-count"></span>
+        </span>
+        <span id="callstack-file-label"></span>
+        <span class="callstack-tip" id="callstack-tip">流程图按 时间→进程→线程→函数 展示调用顺序 · 点击节点查看日志</span>
+      </div>
+      <div id="callstack-tree"></div>
+      <div id="callstack-flow" style="display:none;">
+        <div id="callstack-flow-canvas" class="cs-flow-scroll"></div>
+        <div id="callstack-flow-detail" style="display:none;"></div>
+      </div>
+      <div id="callstack-empty">暂无日志数据。<br/>流程图模式基于日志自动生成函数调用顺序（无需调用栈文件）；<br/>树状模式可点击「📂 加载调用栈文件」查看调用栈树（缩进树 或 A &lt;- B &lt;- C 箭头链）</div>
+    </div>
     <div id="timeline-help-popup" style="display:none;">
       <div class="timeline-help-title">🧭 时间线操作说明</div>
       <table class="timeline-help-table">
@@ -273,7 +294,9 @@
         <tr><td><b>滚轮</b>（标签列）</td><td>上下滚动线程/方法列表</td></tr>
         <tr><td><b>拖动</b>（标签列）</td><td>上下滚动线程/方法列表</td></tr>
         <tr><td><b>点击线程</b></td><td>过滤该线程日志</td></tr>
-        <tr><td><b>双击线程</b></td><td>查看该线程方法时间线</td></tr>
+        <tr><td><b>双击线程</b></td><td>查看该线程方法时间线（按调用顺序）</td></tr>
+        <tr><td><b>⇅ 排序</b></td><td>切换方法按调用序/字母序排列</td></tr>
+        <tr><td><b>调用栈</b> tab</td><td>加载调用栈文件，按调用关系树显示日志</td></tr>
         <tr><td><b>点击条目</b></td><td>定位到对应日志行</td></tr>
         <tr><td><b>双击</b>标签列边界</td><td>重置标签列宽度</td></tr>
         <tr><td><b>↔️ 适应</b></td><td>重置为全览视图</td></tr>
@@ -1039,6 +1062,7 @@
 <!-- 隐藏的文件输入 -->
 <input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
 <input type="file" id="merge-file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
+<input type="file" id="callstack-file-input" accept=".txt,.log,.stack,.callstack" style="display:none;" />
 
 <script src="lib/jszip/jszip.min.js"></script>
 <script src="lib/fflate/fflate.umd.js"></script>
@@ -1050,7 +1074,8 @@
 <script src="js/scroll_math.js"></script>
 <script src="js/grid.js"></script>
 <script src="js/timeline.js"></script>
-  <script src="js/thread_timeline.js"></script>
+<script src="js/thread_timeline.js"></script>
+<script src="js/callstack.js"></script>
   <script src="js/view_manager.js"></script>
   <script src="js/stats.js"></script>
 <script src="js/app.js"></script>

@@ -24,6 +24,7 @@ const App = {
     LogGrid.init();
     Timeline.init();
     ThreadTimeline.init();
+    CallStack.init();
     // 窗口大小变化时重绘时间线
     window.addEventListener('resize', Utils.debounce(() => {
       this._resizeActiveTimeline();
@@ -1408,7 +1409,9 @@ const App = {
         canvas.height = canvas.clientHeight;
         // 默认显示线程模式
         const activeMode = document.querySelector('.timeline-mode-btn.active');
-        if (activeMode && activeMode.dataset.mode === 'thread') {
+        if (activeMode && activeMode.dataset.mode === 'callstack') {
+          if (CallStack) CallStack.activate();
+        } else if (activeMode && activeMode.dataset.mode === 'thread') {
           ThreadTimeline._refreshFromPidSelect();
           if (locateEntry) ThreadTimeline.locateEntry(locateEntry);
         } else {

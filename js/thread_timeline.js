@@ -247,17 +247,39 @@ const ThreadTimeline = {
       if (!map.has(method)) map.set(method, []);
       map.get(method).push(e);
     }
-    const names = [...map.keys()].sort((a, b) => {
+    // 调用顺序：按首次调用时间排序（entries 已按时间排序，每组首个即最早调用）
+    const callOrder = [...map.keys()].sort((a, b) => {
+      if (a === '(unknown)') return 1;
+      if (b === '(unknown)') return -1;
+      const at = map.get(a)[0].date.getTime();
+      const bt = map.get(b)[0].date.getTime();
+      return at - bt || a.localeCompare(b);
+    });
+    this._callOrder = callOrder;
+    // 调用序列：按时间顺序去重相邻方法名，形成 A → B → C 链
+    this._callSequence = [];
+    let last = '';
+    for (const e of entries) {
+      const m = this._extractMethod(e);
+      if (m !== last) { this._callSequence.push(m); last = m; }
+    }
+    const alphaNames = [...map.keys()].sort((a, b) => {
       if (a === '(unknown)') return 1;
       if (b === '(unknown)') return -1;
       return a.localeCompare(b);
     });
-    this._detailMethods = names.map((name, i) => ({
+    this._alphaOrder = alphaNames;
+    // 排序模式：'call' 调用序（默认）/ 'alpha' 字母序
+    this._sortMode = this._sortMode || 'call';
+    const order = this._sortMode === 'alpha' ? alphaNames : callOrder;
+    this._detailMethods = order.map((name, i) => ({
       name,
       entries: map.get(name),
       color: this.PALETTE[i % this.PALETTE.length],
       _positions: null,
       _levels: null,
+      // 真实调用序号（不受排序模式影响）
+      callIdx: callOrder.indexOf(name),
     }));
     // 建立 名称→方法 索引与 条目→方法 索引（避免每帧线性查找）
     this._methodIndex = new Map();
@@ -280,17 +302,31 @@ const ThreadTimeline = {
       m._positions = positions;
       m._levels = levels;
     }
-    this._detailVisibleMethods = [...names];
+    this._detailVisibleMethods = [...order];
+  },
+
+  // 切换方法排序方式：调用序 ⇄ 字母序
+  _toggleMethodSort() {
+    this._sortMode = this._sortMode === 'alpha' ? 'call' : 'alpha';
+    this._updateDetailHeader();
+    if (this._detailMethodSearch) {
+      this._filterDetailMethods(this._detailMethodSearch);
+    } else {
+      this._detailVisibleMethods = this._sortMode === 'alpha'
+        ? [...this._alphaOrder] : [...this._callOrder];
+      this._clampScrollY();
+      this._draw();
+    }
   },
 
   _filterDetailMethods(searchText) {
     this._detailMethodSearch = searchText;
+    const base = this._sortMode === 'alpha' ? this._alphaOrder : this._callOrder;
     if (!searchText) {
-      this._detailVisibleMethods = this._detailMethods.map(m => m.name);
+      this._detailVisibleMethods = [...base];
     } else {
       const re = new RegExp(Utils.escapeRegex(searchText), 'i');
-      this._detailVisibleMethods = this._detailMethods
-        .filter(m => re.test(m.name)).map(m => m.name);
+      this._detailVisibleMethods = base.filter(n => re.test(n));
     }
     this._clampScrollY();
     this._draw();
@@ -308,12 +344,19 @@ const ThreadTimeline = {
     const backBtn = document.getElementById('btn-timeline-back');
     const detailLabel = document.getElementById('timeline-detail-label');
     const methodSearch = document.getElementById('timeline-method-search');
+    const sortBtn = document.getElementById('btn-timeline-method-sort');
     if (backBtn) backBtn.style.display = this._detailThread ? 'inline-flex' : 'none';
     if (detailLabel) {
       detailLabel.style.display = this._detailThread ? 'inline' : 'none';
       detailLabel.textContent = this._detailThread ? `线程: ${this._detailThread}` : '';
     }
     if (methodSearch) methodSearch.style.display = this._detailThread ? 'inline-block' : 'none';
+    if (sortBtn) {
+      sortBtn.style.display = this._detailThread ? 'inline-block' : 'none';
+      sortBtn.textContent = this._detailThread
+        ? (this._sortMode === 'alpha' ? '⇅ 字母序' : '⇅ 调用序')
+        : '';
+    }
   },
 
   // ===== 缩放/平移 =====
@@ -930,6 +973,15 @@ const ThreadTimeline = {
       ctx.fillText(
         `${this._detailMethods.length} 方法 · ${total.toLocaleString()} 条日志 · ${rangeStr} · 线程: ${this._detailThread}`,
         labelEnd + 8, y + 12);
+      // 调用序列概览：A → B → C（截断显示前 12 个）
+      const seq = this._callSequence || [];
+      if (seq.length > 0) {
+        let seqStr = seq.slice(0, 12).join(' → ');
+        if (seq.length > 12) seqStr += ' …';
+        ctx.fillStyle = this._tc.textMuted;
+        ctx.font = '9px monospace';
+        ctx.fillText(`调用序: ${seqStr}`, labelEnd + 8, y + 26);
+      }
     } else {
       const total = this._totalCount != null
         ? this._totalCount
@@ -1024,7 +1076,11 @@ const ThreadTimeline = {
 
     ctx.fillStyle = isHovered ? this._tc.text : this._tc.textMuted;
     ctx.font = '9px sans-serif';
-    ctx.fillText(String(source.entries.length), labelEnd - 8, cy - 8);
+    // 详情模式：标注真实调用序号（#N）与日志条数，直观体现函数调用顺序
+    const countLabel = this._detailThread && source.callIdx !== undefined
+      ? `#${source.callIdx + 1} · ${source.entries.length}`
+      : String(source.entries.length);
+    ctx.fillText(countLabel, labelEnd - 8, cy - 8);
 
     if (!source._positions) return;
     const pos = source._positions, levels = source._levels;
@@ -1248,6 +1304,13 @@ const ThreadTimeline = {
         this._detailThread = null;
         this._detailMethods = [];
         this._updateDetailHeader();
+        if (this._mode === 'callstack') {
+          // 调用栈模式：显示调用栈视图（隐藏 canvas 交互）
+          if (CallStack) CallStack.activate();
+          if (App && App.syncTimelineSelection) App.syncTimelineSelection();
+          return;
+        }
+        if (CallStack) CallStack.deactivate();
         if (this._mode === 'level') Timeline.show(LogParser.entries);
         else this._refreshFromPidSelect();
         // 切换后同步当前网格选中行标记
@@ -1264,6 +1327,10 @@ const ThreadTimeline = {
 
     const ms = document.getElementById('timeline-method-search');
     if (ms) ms.addEventListener('input', Utils.debounce(() => this._filterDetailMethods(ms.value), 200));
+
+    // 方法排序切换：调用序 ⇄ 字母序
+    const sortBtn = document.getElementById('btn-timeline-method-sort');
+    if (sortBtn) sortBtn.addEventListener('click', () => this._toggleMethodSort());
 
     // 操作帮助弹层：❓ 按钮 toggle，点击其他区域关闭
     const helpBtn = document.getElementById('btn-timeline-help');
