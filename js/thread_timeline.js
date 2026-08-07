@@ -103,6 +103,7 @@ const ThreadTimeline = {
       return;
     }
     this._totalCount = this.entries.length;
+    this._maybeShowFirstHint();
 
     this._labelCache.clear();
     this._groupByThread();
@@ -317,11 +318,14 @@ const ThreadTimeline = {
 
   // ===== 缩放/平移 =====
 
-  fitToData() {
+  fitToData(notify) {
     this.zoomLevel = 1;
     this.offsetX = 0;
     this.scrollY = 0;
     this._draw();
+    if (notify && this._isActive() && this.entries.length > 0) {
+      Utils.showToast(`已适应全部数据 · ${this._totalCount.toLocaleString()} 条`, 'success', 1800);
+    }
   },
 
   // 设置联动标记（网格选中行 → 时间线高亮）
@@ -364,17 +368,39 @@ const ThreadTimeline = {
   },
 
   zoomIn(mx) {
-    const old = this.zoomLevel;
-    this.zoomLevel = Math.min(old * 1.5, 80);
-    this.offsetX = this.offsetX * (this.zoomLevel / old) + mx * (1 - this.zoomLevel / old);
-    this._draw();
+    this._zoomBy(1.25, mx);
   },
 
   zoomOut(mx) {
+    this._zoomBy(1 / 1.25, mx);
+  },
+
+  // 平滑缩放：以 mx 为锚点，按 factor 缩放并反馈当前视图时间跨度
+  _zoomBy(factor, mx) {
     const old = this.zoomLevel;
-    this.zoomLevel = Math.max(old / 1.5, 0.05);
-    this.offsetX = this.offsetX * (this.zoomLevel / old) + mx * (1 - this.zoomLevel / old);
+    const next = Math.max(0.05, Math.min(80, old * factor));
+    if (next === old) return;
+    this.zoomLevel = next;
+    this.offsetX = this.offsetX * (next / old) + mx * (1 - next / old);
     this._draw();
+    this._scheduleZoomFeedback();
+  },
+
+  // 缩放停止后（500ms 无新操作）显示当前可视时间跨度，避免连续缩放刷屏
+  _scheduleZoomFeedback() {
+    if (this._zoomFeedbackTimer) clearTimeout(this._zoomFeedbackTimer);
+    this._zoomFeedbackTimer = setTimeout(() => {
+      this._zoomFeedbackTimer = null;
+      if (!this._isActive() || this.entries.length === 0) return;
+      Utils.showToast(`当前视图: ${this._formatDuration(this.timeRange / this.zoomLevel)}`, '', 1200);
+    }, 500);
+  },
+
+  _formatDuration(ms) {
+    if (ms < 1000) return ms + 'ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+    if (ms < 3600000) return (ms / 60000).toFixed(1) + 'min';
+    return (ms / 3600000).toFixed(1) + 'h';
   },
 
   // 自适应时间刻度：根据可视时间窗口生成对齐的刻度，避免放大后刻度消失
@@ -448,6 +474,7 @@ const ThreadTimeline = {
     this.canvas.addEventListener('mouseup', () => {
       if (!this._isActive()) return;
       this.dragging = false;
+      this.canvas.style.cursor = '';
       if (this._labelResizing) {
         this._labelResizing = false;
         this._suppressClick = true;
@@ -459,6 +486,7 @@ const ThreadTimeline = {
       this.dragging = false;
       this._labelResizing = false;
       this._hoveredThreadIdx = -1;
+      this.canvas.style.cursor = '';
       this.tooltip.style.display = 'none';
       this._draw();
     });
@@ -475,7 +503,8 @@ const ThreadTimeline = {
       if (e.ctrlKey || e.metaKey) {
         // Ctrl/Cmd + 滚轮 = 缩放（任意区域，锚点取绘图区起点避免异常偏移）
         const anchor = Math.max(labelEnd, mx);
-        e.deltaY < 0 ? this.zoomIn(anchor) : this.zoomOut(anchor);
+        const factor = 1 + Math.min(Math.abs(e.deltaY), 400) / 1000;
+        e.deltaY < 0 ? this._zoomBy(factor, anchor) : this._zoomBy(1 / factor, anchor);
       } else if (e.shiftKey) {
         // Shift + 滚轮 = 水平平移
         this.offsetX -= e.deltaY * 2;
@@ -487,8 +516,9 @@ const ThreadTimeline = {
           this._draw();
         }
       } else {
-        // 绘图区：滚轮 = 缩放时间轴
-        e.deltaY < 0 ? this.zoomIn(mx) : this.zoomOut(mx);
+        // 绘图区：滚轮 = 缩放时间轴（按 deltaY 精细缩放，避免跳变）
+        const factor = 1 + Math.min(Math.abs(e.deltaY), 400) / 1000;
+        e.deltaY < 0 ? this._zoomBy(factor, mx) : this._zoomBy(1 / factor, mx);
       }
     });
     this.canvas.addEventListener('click', e => {
@@ -573,7 +603,7 @@ const ThreadTimeline = {
     });
     document.getElementById('btn-timeline-fit').addEventListener('click', () => {
       if (!this._isActive()) return;
-      this.fitToData();
+      this.fitToData(true);
     });
   },
 
@@ -591,6 +621,8 @@ const ThreadTimeline = {
     this.dragging = true;
     // 区域化拖拽：绘图区 = 水平平移，标签列 = 垂直滚动（互不冲突）
     this._dragMode = (x < this.MARGIN.left + this.LABEL_WIDTH) ? 'vscroll' : 'hpan';
+    // 拖拽时光标变为抓取状态，提供操作反馈
+    this.canvas.style.cursor = 'grabbing';
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
     this.dragStartOffset = this.offsetX;
@@ -694,7 +726,8 @@ const ThreadTimeline = {
     } else {
       this._tooltipEntry = null;
       const list = this._detailThread ? this._detailVisibleMethods : this._visibleThreads;
-      this.canvas.style.cursor = ti >= 0 && x <= labelEnd ? 'pointer' : 'crosshair';
+      // 绘图区空白：grab 光标提示可拖拽平移
+      this.canvas.style.cursor = ti >= 0 && x <= labelEnd ? 'pointer' : 'grab';
       this.tooltip.style.display = 'none';
     }
 
@@ -1231,6 +1264,30 @@ const ThreadTimeline = {
 
     const ms = document.getElementById('timeline-method-search');
     if (ms) ms.addEventListener('input', Utils.debounce(() => this._filterDetailMethods(ms.value), 200));
+
+    // 操作帮助弹层：❓ 按钮 toggle，点击其他区域关闭
+    const helpBtn = document.getElementById('btn-timeline-help');
+    if (helpBtn) {
+      helpBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const popup = document.getElementById('timeline-help-popup');
+        if (popup) popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
+      });
+      document.addEventListener('click', (e) => {
+        const popup = document.getElementById('timeline-help-popup');
+        if (!popup || popup.style.display === 'none') return;
+        if (!popup.contains(e.target) && !e.target.closest('#btn-timeline-help')) {
+          popup.style.display = 'none';
+        }
+      });
+    }
+  },
+
+  // 首次打开时间线时给出操作引导（每会话一次，避免打扰）
+  _maybeShowFirstHint() {
+    if (sessionStorage.getItem('tl-hint-shown')) return;
+    sessionStorage.setItem('tl-hint-shown', '1');
+    Utils.showToast('滚轮缩放 · 拖动平移 · Shift+滚轮左右平移 · 双击线程查看详情', '', 4000);
   },
 
   _refreshFromPidSelect() {

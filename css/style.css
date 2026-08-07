@@ -1369,6 +1369,60 @@ body {
   transform: translateY(-1px);
 }
 
+/* 时间线操作迷你提示条：位于头部与画布之间的独立条带，不遮盖时间轴 */
+#timeline-hint {
+  flex-shrink: 0;
+  text-align: right;
+  padding: 3px 14px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 10px;
+  color: var(--text-muted);
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+
+/* 时间线操作帮助弹层 */
+#timeline-help-popup {
+  position: absolute;
+  top: 70px;
+  right: 12px;
+  z-index: 1650;
+  width: 290px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--text-secondary);
+}
+.timeline-help-title {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+}
+.timeline-help-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.timeline-help-table td {
+  padding: 2px 4px;
+  vertical-align: top;
+}
+.timeline-help-table td:first-child {
+  width: 46%;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
 #timeline-tooltip {
   position: fixed;
   background: var(--bg-surface);

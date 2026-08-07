@@ -1208,6 +1208,75 @@ def _(t, flags):
         t.fail("缺少 _totalCount 缓存")
 
 
+@suite.test("时间线-交互提示与人性化优化")
+def _(t, flags):
+    """操作帮助按钮/弹层、迷你提示条、平滑缩放、缩放反馈、拖拽光标、首次引导"""
+    html_path = os.path.join(ROOT, 'index.html')
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    html = open(html_path, encoding='utf-8').read()
+    css = open(css_path, encoding='utf-8').read()
+    js = open(js_path, encoding='utf-8').read()
+
+    # 1. 帮助按钮 / 帮助弹层 / 迷你提示条
+    if 'btn-timeline-help' in html:
+        t.ok("头部包含操作帮助按钮 ❓")
+    else:
+        t.fail("缺少操作帮助按钮")
+    if 'timeline-help-popup' in html and 'timeline-help-table' in html:
+        t.ok("包含操作说明弹层（快捷键表）")
+    else:
+        t.fail("缺少操作说明弹层")
+    if 'timeline-hint' in html:
+        t.ok("包含常驻迷你操作提示条")
+    else:
+        t.fail("缺少迷你操作提示条")
+
+    # 2. 弹层/提示条样式
+    if 'timeline-help-popup' in css and 'timeline-help-table' in css:
+        t.ok("帮助弹层样式定义")
+    else:
+        t.fail("缺少帮助弹层样式")
+    if 'timeline-hint' in css and 'flex-shrink: 0' in css:
+        t.ok("提示条为头部与画布间独立条带（不遮盖时间轴）")
+    else:
+        t.fail("缺少提示条样式")
+
+    # 3. 平滑缩放：统一 _zoomBy 入口 + 1.25 倍率（按钮）
+    if '_zoomBy(factor' in js and '1.25' in js:
+        t.ok("平滑缩放（_zoomBy 统一入口 + 1.25 倍率）")
+    else:
+        t.fail("缺少平滑缩放")
+    if 'Math.min(Math.abs(e.deltaY), 400) / 1000' in js:
+        t.ok("滚轮按 deltaY 精细缩放（避免跳变）")
+    else:
+        t.fail("缺少 deltaY 精细缩放")
+
+    # 4. 缩放反馈：停止后显示当前视图时间跨度
+    if '_scheduleZoomFeedback' in js and '_formatDuration' in js:
+        t.ok("缩放反馈（停止后显示当前视图时间跨度）")
+    else:
+        t.fail("缺少缩放反馈")
+
+    # 5. 适应按钮带反馈
+    if 'fitToData(true)' in js:
+        t.ok("适应按钮带完成反馈")
+    else:
+        t.fail("适应按钮缺少反馈")
+
+    # 6. 拖拽光标反馈（grab/grabbing）
+    if "'grabbing'" in js and "'grab'" in js:
+        t.ok("拖拽光标反馈（grab/grabbing）")
+    else:
+        t.fail("缺少拖拽光标反馈")
+
+    # 7. 首次操作引导（每会话一次）
+    if '_maybeShowFirstHint' in js and "sessionStorage.getItem('tl-hint-shown')" in js:
+        t.ok("首次打开时间线操作引导")
+    else:
+        t.fail("缺少首次操作引导")
+
+
 # ===== filter.js 高级过滤输入框绑定 =====
 
 @suite.test("filter.js 高级过滤输入框绑定完整性")
