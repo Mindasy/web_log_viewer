@@ -256,11 +256,29 @@
         <button id="btn-timeline-fit">↔️ 适应</button>
       </div>
       <div class="timeline-header-actions">
+        <button id="btn-timeline-help" title="操作帮助">❓</button>
         <button id="btn-timeline-minimize" title="最小化（保留视图状态）">—</button>
         <button id="btn-close-timeline">✕</button>
       </div>
     </div>
+    <div id="timeline-hint">滚轮缩放 · 拖动平移 · Shift+滚轮左右平移 · 双击线程查看详情</div>
     <canvas id="timeline-canvas"></canvas>
+    <div id="timeline-help-popup" style="display:none;">
+      <div class="timeline-help-title">🧭 时间线操作说明</div>
+      <table class="timeline-help-table">
+        <tr><td><b>滚轮</b>（绘图区）</td><td>缩放时间轴</td></tr>
+        <tr><td><b>拖动</b>（绘图区）</td><td>左右平移时间轴</td></tr>
+        <tr><td><b>Shift + 滚轮</b></td><td>左右平移时间轴</td></tr>
+        <tr><td><b>Ctrl/Cmd + 滚轮</b></td><td>缩放（任意区域）</td></tr>
+        <tr><td><b>滚轮</b>（标签列）</td><td>上下滚动线程/方法列表</td></tr>
+        <tr><td><b>拖动</b>（标签列）</td><td>上下滚动线程/方法列表</td></tr>
+        <tr><td><b>点击线程</b></td><td>过滤该线程日志</td></tr>
+        <tr><td><b>双击线程</b></td><td>查看该线程方法时间线</td></tr>
+        <tr><td><b>点击条目</b></td><td>定位到对应日志行</td></tr>
+        <tr><td><b>双击</b>标签列边界</td><td>重置标签列宽度</td></tr>
+        <tr><td><b>↔️ 适应</b></td><td>重置为全览视图</td></tr>
+      </table>
+    </div>
   </div>
 
 <!-- 时间线面板宽度拖拽手柄 -->

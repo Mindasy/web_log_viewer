@@ -236,7 +236,7 @@ def _(t, flags):
         ('init', '初始化方法'),
         ('show', '显示方法'),
         ('_groupByThread', '线程分组'),
-        ('_buildTimeRange', '时间范围计算'),
+        ('minTime', '时间范围计算'),
         ('_precomputePositions', '位置预计算'),
         ('_filterThreads', '线程过滤'),
         ('_draw', '绘制调度'),
@@ -1141,7 +1141,7 @@ def _(t, flags):
         t.fail("缺少线程内时间排序")
 
     # 全局时间范围遍历所有条目
-    if 'for (const e of t.entries)' in js:
+    if 'for (const e of t.entries)' in js or 'i < entries.length' in js:
         t.ok("时间范围遍历所有条目（非仅首尾）")
     else:
         t.fail("时间范围未遍历所有条目")
@@ -1157,6 +1157,124 @@ def _(t, flags):
         t.ok("摘要栏绘制")
     else:
         t.fail("缺少摘要栏绘制")
+
+
+@suite.test("ThreadTimeline 大规模数据性能优化（issue #52）")
+def _(t, flags):
+    """200w+ 行日志时间线卡顿修复：段块模式同色段合并 + 高密度自动降级像素聚合"""
+    js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(js_path, encoding='utf-8').read()
+
+    # 1. 段块模式：同色连续段合并（flushSeg / curLvl），避免逐条目 fillRect
+    if 'flushSeg' in js:
+        t.ok("段块模式同色连续段合并绘制")
+    else:
+        t.fail("缺少段块模式段合并")
+
+    # 2. 高密度自动降级：可视条目超过阈值时使用像素聚合绘制
+    if 'plotW * 3' in js:
+        t.ok("可视条目过多时自动降级像素聚合")
+    else:
+        t.fail("缺少高密度降级阈值")
+
+    # 3. 密度模式：Uint32Array 计数桶（替代字符串 key，避免 split/parseInt）
+    if 'Uint32Array' in js:
+        t.ok("密度模式使用 Uint32Array 计数桶")
+    else:
+        t.fail("缺少 Uint32Array 计数桶")
+
+    # 4. 密度模式：高优先级级别（FATAL/ERROR）后画覆盖，保证错误可见
+    if 'lvl <= 1' in js and 'minH' in js:
+        t.ok("FATAL/ERROR 最小高度保证错误级别可见")
+    else:
+        t.fail("缺少高优先级级别最小高度")
+
+    # 5. 竖线高度钳制在泳道内，避免溢出覆盖相邻泳道
+    if 'Math.min(this.SWIMLANE_H' in js:
+        t.ok("竖线高度钳制在泳道内")
+    else:
+        t.fail("缺少竖线高度钳制")
+
+    # 6. show 数据准备合并遍历（分组与时间范围一次完成）
+    if '_buildTimeRange' not in js:
+        t.ok("时间范围计算已合并进 _groupByThread（减少全量遍历）")
+    else:
+        t.fail("仍存在独立的 _buildTimeRange 全量遍历")
+
+    # 7. 摘要统计缓存（避免每帧 reduce 求和）
+    if '_totalCount' in js:
+        t.ok("摘要统计缓存 _totalCount")
+    else:
+        t.fail("缺少 _totalCount 缓存")
+
+
+@suite.test("时间线-交互提示与人性化优化")
+def _(t, flags):
+    """操作帮助按钮/弹层、迷你提示条、平滑缩放、缩放反馈、拖拽光标、首次引导"""
+    html_path = os.path.join(ROOT, 'index.html')
+    css_path = os.path.join(ROOT, 'css', 'style.css')
+    js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    html = open(html_path, encoding='utf-8').read()
+    css = open(css_path, encoding='utf-8').read()
+    js = open(js_path, encoding='utf-8').read()
+
+    # 1. 帮助按钮 / 帮助弹层 / 迷你提示条
+    if 'btn-timeline-help' in html:
+        t.ok("头部包含操作帮助按钮 ❓")
+    else:
+        t.fail("缺少操作帮助按钮")
+    if 'timeline-help-popup' in html and 'timeline-help-table' in html:
+        t.ok("包含操作说明弹层（快捷键表）")
+    else:
+        t.fail("缺少操作说明弹层")
+    if 'timeline-hint' in html:
+        t.ok("包含常驻迷你操作提示条")
+    else:
+        t.fail("缺少迷你操作提示条")
+
+    # 2. 弹层/提示条样式
+    if 'timeline-help-popup' in css and 'timeline-help-table' in css:
+        t.ok("帮助弹层样式定义")
+    else:
+        t.fail("缺少帮助弹层样式")
+    if 'timeline-hint' in css and 'flex-shrink: 0' in css:
+        t.ok("提示条为头部与画布间独立条带（不遮盖时间轴）")
+    else:
+        t.fail("缺少提示条样式")
+
+    # 3. 平滑缩放：统一 _zoomBy 入口 + 1.25 倍率（按钮）
+    if '_zoomBy(factor' in js and '1.25' in js:
+        t.ok("平滑缩放（_zoomBy 统一入口 + 1.25 倍率）")
+    else:
+        t.fail("缺少平滑缩放")
+    if 'Math.min(Math.abs(e.deltaY), 400) / 1000' in js:
+        t.ok("滚轮按 deltaY 精细缩放（避免跳变）")
+    else:
+        t.fail("缺少 deltaY 精细缩放")
+
+    # 4. 缩放反馈：停止后显示当前视图时间跨度
+    if '_scheduleZoomFeedback' in js and '_formatDuration' in js:
+        t.ok("缩放反馈（停止后显示当前视图时间跨度）")
+    else:
+        t.fail("缺少缩放反馈")
+
+    # 5. 适应按钮带反馈
+    if 'fitToData(true)' in js:
+        t.ok("适应按钮带完成反馈")
+    else:
+        t.fail("适应按钮缺少反馈")
+
+    # 6. 拖拽光标反馈（grab/grabbing）
+    if "'grabbing'" in js and "'grab'" in js:
+        t.ok("拖拽光标反馈（grab/grabbing）")
+    else:
+        t.fail("缺少拖拽光标反馈")
+
+    # 7. 首次操作引导（每会话一次）
+    if '_maybeShowFirstHint' in js and "sessionStorage.getItem('tl-hint-shown')" in js:
+        t.ok("首次打开时间线操作引导")
+    else:
+        t.fail("缺少首次操作引导")
 
 
 # ===== filter.js 高级过滤输入框绑定 =====
