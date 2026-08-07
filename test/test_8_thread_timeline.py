@@ -404,7 +404,7 @@ def _(t, flags):
     # 清除必须清空视图栈
     clear_idx = js.find('clearAll() {')
     if clear_idx >= 0:
-        seg = js[clear_idx:clear_idx + 800]
+        seg = js[clear_idx:clear_idx + 1000]
         if 'ViewManager.clear()' in seg:
             t.ok("清除 (clearAll) 会清空视图栈与面包屑")
         else:
@@ -1634,6 +1634,18 @@ def _(t, flags):
         t.ok("悬浮按钮样式定义")
     else:
         t.fail("缺少悬浮按钮样式")
+
+    # 最小化/关闭按钮应包在 .timeline-header-actions 中并固定到头部最右端，
+    # 避免被 popup-header 的 space-between + flex-wrap 分散到诡异位置
+    if 'timeline-header-actions' in html:
+        t.ok("最小化/关闭按钮包在 timeline-header-actions 容器中")
+    else:
+        t.fail("缺少 timeline-header-actions 容器")
+
+    if 'timeline-header-actions' in css and 'margin-left: auto' in css:
+        t.ok("actions 容器推到头部最右端")
+    else:
+        t.fail("缺少 actions 容器右侧固定样式")
 
 
 @suite.test("时间线-日期维度时间轴")

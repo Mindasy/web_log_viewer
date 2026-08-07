@@ -43,3 +43,31 @@ def _(t, flags):
                'about-version', 'about-release-time']
     for eid in key_ids:
         t.check(f'id="{eid}"' in html, f"关键元素 #{eid} 存在")
+
+
+@suite.test("网格列头完整性")
+def _(t, flags):
+    """网格头应包含全部标准列：index/bookmark/timestamp/level/pid/tid/tag/source/message"""
+    html_path = os.path.join(ROOT, 'index.html')
+    if not os.path.exists(html_path):
+        return
+    html = open(html_path, encoding='utf-8').read()
+
+    header_section = html[html.find('id="grid-header"'):html.find('id="grid-body"')]
+    expected_cols = ['index', 'bookmark', 'timestamp', 'level',
+                     'pid', 'tid', 'tag', 'source', 'message']
+    for col in expected_cols:
+        t.check(f'data-col="{col}"' in header_section, f"网格列头包含 {col} 列")
+
+
+@suite.test("文件列表面板结构")
+def _(t, flags):
+    """文件列表面板包含面板头、关闭按钮与列表容器"""
+    html_path = os.path.join(ROOT, 'index.html')
+    if not os.path.exists(html_path):
+        return
+    html = open(html_path, encoding='utf-8').read()
+
+    for eid in ['files-panel', 'files-panel-header', 'files-list', 'btn-close-files']:
+        t.check(f'id="{eid}"' in html, f"文件面板元素 #{eid} 存在")
+    t.check('id="btn-toggle-files"' in html, "工具栏文件 toggle 按钮存在")

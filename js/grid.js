@@ -27,6 +27,7 @@ const LogGrid = {
     { key: 'level',     label: '级别',   className: 'col-level',       minWidth: 60,  canHide: true,  canSort: true },
     { key: 'pid',       label: '进程ID', className: 'col-pid',         minWidth: 60,  canHide: true,  canSort: true },
     { key: 'tid',       label: '线程ID', className: 'col-tid',         minWidth: 60,  canHide: true,  canSort: true },
+    { key: 'tag',       label: '标签',   className: 'col-tag',         minWidth: 70,  canHide: true,  canSort: true },
     { key: 'source',    label: '来源',   className: 'col-source',      minWidth: 80,  canHide: true,  canSort: true },
     { key: 'message',   label: '消息',   className: 'col-message',     minWidth: 120, canHide: true,  canSort: false },
   ],
@@ -659,6 +660,9 @@ const LogGrid = {
     }
     if (this.isColumnVisible('tid')) {
       html += `<div class="col col-tid"${w('tid')} title="${this.escapeHtml(entry.tid || '-')}">${this._hlText(entry.tid || '-', 'tid', entry.index, hlCache)}</div>`;
+    }
+    if (this.isColumnVisible('tag')) {
+      html += `<div class="col col-tag"${w('tag')} title="${this.escapeHtml(entry.tag || '-')}">${this._hlText(entry.tag || '-', 'tag', entry.index, hlCache)}</div>`;
     }
     if (this.isColumnVisible('source')) {
       html += `<div class="col col-source"${w('source')} title="${this.escapeHtml(entry.source || '-')}">${this._hlText(entry.source || '-', 'source', entry.index, hlCache)}</div>`;

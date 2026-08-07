@@ -135,7 +135,9 @@ const App = {
     document.getElementById('btn-column-settings').addEventListener('click', () => this.toggleColumnSettings());
 
     document.getElementById('btn-close-files').addEventListener('click', () => {
-      document.getElementById('files-panel').classList.remove('expanded');
+      const filesPanel = document.getElementById('files-panel');
+      filesPanel.classList.remove('expanded');
+      filesPanel.style.width = '';
     });
 
     // 文件面板拖拽调整宽度
@@ -1230,6 +1232,7 @@ const App = {
     document.getElementById('status-text').textContent = '就绪';
     const filesPanel = document.getElementById('files-panel');
     filesPanel.classList.remove('expanded');
+    filesPanel.style.width = '';
     document.getElementById('files-list').innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:11px">暂无文件</div>';
     this.updateButtonStates();
     this._updateSaveViewButton();
@@ -1697,6 +1700,7 @@ const App = {
       { key: 'level', el: 'detail-level', label: '级别' },
       { key: 'pid', el: 'detail-pid', label: '进程ID' },
       { key: 'tid', el: 'detail-tid', label: '线程ID' },
+      { key: 'tag', el: 'detail-tag', label: '标签' },
       { key: 'source', el: 'detail-source', label: '来源' },
       { key: 'message', el: 'detail-message', label: '消息' },
     ];
@@ -1975,7 +1979,7 @@ const App = {
   updateButtonStates() {
     const hasData = LogParser.entries.length > 0;
     const ids = ['btn-reload', 'btn-export', 'btn-bookmark', 'btn-bookmarks-panel',
-                 'btn-stats', 'btn-timeline', 'btn-toggle-files', 'btn-column-settings',
+                 'btn-stats', 'btn-timeline', 'btn-column-settings',
                  'btn-parser-config', 'btn-clear'];
     for (const id of ids) {
       const btn = document.getElementById(id);
@@ -2019,6 +2023,8 @@ const App = {
       e.preventDefault();
       startX = e.clientX;
       startWidth = panel.offsetWidth;
+      // 拖拽期间禁用过渡，保证宽度即时跟随鼠标
+      panel.style.transition = 'none';
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
 
@@ -2034,6 +2040,11 @@ const App = {
         document.removeEventListener('mouseup', onUp);
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
+        // 恢复过渡，供 toggle 折叠/展开动画使用
+        panel.style.transition = '';
+        // 记住拖拽后的宽度（读取内联值，避免过渡动画期间 offsetWidth 不准）
+        const w = parseInt(panel.style.width, 10) || panel.offsetWidth;
+        localStorage.setItem('files-panel-width', String(Math.max(120, Math.min(600, w))));
       };
 
       document.addEventListener('mousemove', onMove);
@@ -2043,8 +2054,18 @@ const App = {
 
   toggleFilesPanel() {
     const panel = document.getElementById('files-panel');
-    panel.classList.toggle('expanded');
     if (panel.classList.contains('expanded')) {
+      // 折叠：清除内联宽度（否则会覆盖 CSS 的 width:0，面板无法收起）
+      panel.classList.remove('expanded');
+      panel.style.width = '';
+    } else {
+      // 展开：恢复拖拽保存的宽度
+      panel.classList.add('expanded');
+      const saved = localStorage.getItem('files-panel-width');
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (num >= 120 && num <= 600) panel.style.width = num + 'px';
+      }
       this.renderFilesList();
     }
   },
