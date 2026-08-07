@@ -91,28 +91,40 @@ const ThreadTimeline = {
     this.pid = pid;
     this._detailThread = null;
     this._detailMethods = [];
-    this.entries = entries.filter(e => e.date);
+    // 预过滤：仅保留带时间戳的条目（220w 级数据下避免后续多轮全量遍历）
+    this.entries = [];
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].date) this.entries.push(entries[i]);
+    }
     this._refreshDpr();
 
     if (this.entries.length === 0) {
       this._drawEmpty('没有带时间戳的日志条目');
       return;
     }
+    this._totalCount = this.entries.length;
 
     this._labelCache.clear();
     this._groupByThread();
-    this._buildTimeRange();
     this._precomputePositions();
     this._filterThreads(document.getElementById('timeline-thread-search')?.value || '');
     this.fitToData();
   },
 
+  // 按线程分组（一次遍历同时完成分组与时间范围计算）
   _groupByThread() {
     const map = new Map();
-    for (const e of this.entries) {
+    let minT = Infinity, maxT = -Infinity;
+    const entries = this.entries;
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
       const key = e.thread || e.tid || 'unknown';
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(e);
+      let arr = map.get(key);
+      if (!arr) { arr = []; map.set(key, arr); }
+      arr.push(e);
+      const ts = e.date.getTime();
+      if (ts < minT) minT = ts;
+      if (ts > maxT) maxT = ts;
     }
     for (const arr of map.values()) {
       arr.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -135,17 +147,6 @@ const ThreadTimeline = {
     for (const s of this.threads) {
       this._threadIndex.set(s.name, s);
       for (const e of s.entries) this._entryLane.set(e, s.name);
-    }
-  },
-
-  _buildTimeRange() {
-    let minT = Infinity, maxT = -Infinity;
-    for (const t of this.threads) {
-      for (const e of t.entries) {
-        const ts = e.date.getTime();
-        if (ts < minT) minT = ts;
-        if (ts > maxT) maxT = ts;
-      }
     }
     this.minTime = minT;
     this.maxTime = maxT;
@@ -205,6 +206,7 @@ const ThreadTimeline = {
     if (!thread) return;
     this._detailThread = threadName;
     this._detailMethodSearch = '';
+    this._detailTotalCount = thread.entries.length;
     // 清除之前的过滤条件，进入全新上下文
     LogFilter.state.sourceFilter = '';
     LogFilter.state.methodFilter = '';
@@ -889,12 +891,16 @@ const ThreadTimeline = {
     else rangeStr = (rangeMs / 3600000).toFixed(1) + 'h';
 
     if (this._detailThread) {
-      const total = this._detailMethods.reduce((s, m) => s + m.entries.length, 0);
+      const total = this._detailTotalCount != null
+        ? this._detailTotalCount
+        : this._detailMethods.reduce((s, m) => s + m.entries.length, 0);
       ctx.fillText(
         `${this._detailMethods.length} 方法 · ${total.toLocaleString()} 条日志 · ${rangeStr} · 线程: ${this._detailThread}`,
         labelEnd + 8, y + 12);
     } else {
-      const total = this.threads.reduce((s, t) => s + t.entries.length, 0);
+      const total = this._totalCount != null
+        ? this._totalCount
+        : this.threads.reduce((s, t) => s + t.entries.length, 0);
       ctx.fillText(
         `${this._threadNames.length} 线程 · ${total.toLocaleString()} 条日志 · ${rangeStr}`,
         labelEnd + 8, y + 12);
@@ -992,34 +998,52 @@ const ThreadTimeline = {
     const count = pos.length;
     const z = this.zoomLevel, ox = this.offsetX;
 
-    if (z < 0.3) {
-      this._drawDensity(ctx, pos, levels, count, cy, labelEnd, plotX2, z, ox, plotW);
+    // 可视条目区间（二分查找）
+    const wLo = ((labelEnd - ox) / z - labelEnd) / plotW;
+    const wHi = ((plotX2 - ox) / z - labelEnd) / plotW;
+    const [v0, v1] = this._findVisibleRange(pos, count, wLo, wHi);
+
+    // 可视条目过多时（每像素超过约 3 条），自动降级为像素聚合绘制，
+    // 避免海量 fillRect 调用导致卡顿（200w+ 行日志全览时关键优化）
+    if (z < 0.3 || (v1 - v0) > Math.max(2000, plotW * 3)) {
+      this._drawDensity(ctx, pos, levels, v0, v1, cy, labelEnd, plotX2, z, ox, plotW);
       return;
     }
 
     // 段块模式：相邻条目之间画彩色矩形，形成连续时间线
+    // 性能优化：同色连续段合并绘制（一次 fillRect 覆盖连续同级别条目），
+    // 而非逐条目调用 fillRect，大幅减少 Canvas 调用次数
     const barH = this.SWIMLANE_H * 0.55;
     const barY = cy - barH / 2;
     const minW = Math.max(1, 1 / z * 0.3); // 最小宽度随缩放调整
 
-    // 只处理可视条目（二分查找区间），避免大量日志时遍历全部条目
-    const wLo = ((labelEnd - ox) / z - labelEnd) / plotW;
-    const wHi = ((plotX2 - ox) / z - labelEnd) / plotW;
-    const [v0, v1] = this._findVisibleRange(pos, count, wLo, wHi);
     const b0 = Math.max(0, v0 - 1), b1 = Math.min(count, v1 + 1);
-
     const buckets = {};
+    let curLvl = -1, segStart = 0, segEnd = 0;
+    const flushSeg = () => {
+      if (curLvl < 0 || segEnd <= segStart) return;
+      const lvlName = ['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][curLvl] || 'other';
+      if (!buckets[lvlName]) buckets[lvlName] = [];
+      buckets[lvlName].push(segStart, segEnd);
+    };
+
     for (let j = b0; j < b1; j++) {
       const x1 = (labelEnd + pos[j] * plotW) * z + ox;
       if (x1 > plotX2 + 5) break;
       const x2 = Math.max(x1 + minW,
         (j + 1 < count) ? (labelEnd + pos[j + 1] * plotW) * z + ox : x1 + minW);
-      if (x2 < labelEnd - 5) continue;
+      const sx = Math.max(x1, labelEnd);
+      const ex = Math.min(x2, plotX2);
+      if (ex < labelEnd) { flushSeg(); curLvl = -1; continue; }
       const lvl = levels[j];
-      const lvlName = ['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][lvl] || 'other';
-      if (!buckets[lvlName]) buckets[lvlName] = [];
-      buckets[lvlName].push(Math.max(x1, labelEnd), Math.min(x2, plotX2));
+      if (lvl !== curLvl) {
+        flushSeg();
+        curLvl = lvl; segStart = sx; segEnd = ex;
+      } else {
+        segEnd = Math.max(segEnd, ex);
+      }
     }
+    flushSeg();
 
     for (const [lvl, segs] of Object.entries(buckets)) {
       const color = this._levelColors[lvl] || this._tc.textMuted;
@@ -1077,29 +1101,39 @@ const ThreadTimeline = {
     ctx.restore();
   },
 
-  _drawDensity(ctx, pos, levels, count, cy, x1, x2, z, ox, plotW) {
+  // 密度模式：像素列聚合绘制（Uint32Array 计数桶，按级别分组绘制减少 fillStyle 切换）
+  _drawDensity(ctx, pos, levels, v0, v1, cy, x1, x2, z, ox, plotW) {
     const labelEnd = this.MARGIN.left + this.LABEL_WIDTH;
-    // 只统计可视列区间的条目，避免大量日志时遍历全部
-    const wLo = ((x1 - ox) / z - labelEnd) / plotW;
-    const wHi = ((x2 - ox) / z - labelEnd) / plotW;
-    const [v0, v1] = this._findVisibleRange(pos, count, wLo, wHi);
-    const colMap = {};
+    // 计数桶：索引 = px*8 + level，复用实例避免每帧分配大数组
+    const need = (x2 + 2) * 8;
+    if (!this._densityBuf || this._densityBuf.length < need) {
+      this._densityBuf = new Uint32Array(need);
+    }
+    const buckets = this._densityBuf.fill(0);
+    let maxCount = 1;
     for (let j = v0; j < v1; j++) {
       const px = Math.round((labelEnd + pos[j] * plotW) * z + ox);
       if (px < x1 || px > x2) continue;
-      const key = px + ':' + levels[j];
-      colMap[key] = (colMap[key] || 0) + 1;
+      const c = ++buckets[(px << 3) + levels[j]];
+      if (c > maxCount) maxCount = c;
     }
     const maxH = this.SWIMLANE_H * 0.8;
-    let maxCount = 1;
-    for (const v of Object.values(colMap)) { if (v > maxCount) maxCount = v; }
-    for (const [key, cnt] of Object.entries(colMap)) {
-      const [pxStr, lvlStr] = key.split(':');
-      const px = parseInt(pxStr), lvl = parseInt(lvlStr);
-      const h = Math.max(1, (cnt / maxCount) * maxH);
-      const color = this._levelColors[['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'][lvl]] || this._tc.textMuted;
+    const LVL_NAMES = ['FATAL','ERROR','WARN','INFO','DEBUG','TRACE'];
+    // 降序绘制：低优先级级别先画、高优先级级别（FATAL/ERROR）后画覆盖，
+    // 保证错误级别在高密度下仍然可见（与段块模式 ERROR/FATAL 高亮一致）
+    for (let lvl = 5; lvl >= 0; lvl--) {
+      const color = this._levelColors[LVL_NAMES[lvl]] || this._tc.textMuted;
       ctx.fillStyle = color;
-      ctx.fillRect(px - 0.5, cy - h / 2, 1, h);
+      // FATAL/ERROR 计数通常远少于 INFO/DEBUG，若竖线高度过低会被掩盖，
+      // 给高优先级级别设置最小高度保证可辨识
+      const minH = lvl <= 1 ? Math.max(2, maxH * 0.2) : 1;
+      for (let px = x1; px <= x2; px++) {
+        const c = buckets[(px << 3) + lvl];
+        if (!c) continue;
+        // 钳制到泳道高度内，避免大计数级别竖线溢出覆盖相邻泳道
+        const h = Math.min(this.SWIMLANE_H, Math.max(minH, (c / maxCount) * maxH));
+        ctx.fillRect(px - 0.5, cy - h / 2, 1, h);
+      }
     }
   },
 

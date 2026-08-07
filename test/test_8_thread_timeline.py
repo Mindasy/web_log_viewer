@@ -236,7 +236,7 @@ def _(t, flags):
         ('init', '初始化方法'),
         ('show', '显示方法'),
         ('_groupByThread', '线程分组'),
-        ('_buildTimeRange', '时间范围计算'),
+        ('minTime', '时间范围计算'),
         ('_precomputePositions', '位置预计算'),
         ('_filterThreads', '线程过滤'),
         ('_draw', '绘制调度'),
@@ -1141,7 +1141,7 @@ def _(t, flags):
         t.fail("缺少线程内时间排序")
 
     # 全局时间范围遍历所有条目
-    if 'for (const e of t.entries)' in js:
+    if 'for (const e of t.entries)' in js or 'i < entries.length' in js:
         t.ok("时间范围遍历所有条目（非仅首尾）")
     else:
         t.fail("时间范围未遍历所有条目")
@@ -1157,6 +1157,55 @@ def _(t, flags):
         t.ok("摘要栏绘制")
     else:
         t.fail("缺少摘要栏绘制")
+
+
+@suite.test("ThreadTimeline 大规模数据性能优化（issue #52）")
+def _(t, flags):
+    """200w+ 行日志时间线卡顿修复：段块模式同色段合并 + 高密度自动降级像素聚合"""
+    js_path = os.path.join(ROOT, 'js', 'thread_timeline.js')
+    js = open(js_path, encoding='utf-8').read()
+
+    # 1. 段块模式：同色连续段合并（flushSeg / curLvl），避免逐条目 fillRect
+    if 'flushSeg' in js:
+        t.ok("段块模式同色连续段合并绘制")
+    else:
+        t.fail("缺少段块模式段合并")
+
+    # 2. 高密度自动降级：可视条目超过阈值时使用像素聚合绘制
+    if 'plotW * 3' in js:
+        t.ok("可视条目过多时自动降级像素聚合")
+    else:
+        t.fail("缺少高密度降级阈值")
+
+    # 3. 密度模式：Uint32Array 计数桶（替代字符串 key，避免 split/parseInt）
+    if 'Uint32Array' in js:
+        t.ok("密度模式使用 Uint32Array 计数桶")
+    else:
+        t.fail("缺少 Uint32Array 计数桶")
+
+    # 4. 密度模式：高优先级级别（FATAL/ERROR）后画覆盖，保证错误可见
+    if 'lvl <= 1' in js and 'minH' in js:
+        t.ok("FATAL/ERROR 最小高度保证错误级别可见")
+    else:
+        t.fail("缺少高优先级级别最小高度")
+
+    # 5. 竖线高度钳制在泳道内，避免溢出覆盖相邻泳道
+    if 'Math.min(this.SWIMLANE_H' in js:
+        t.ok("竖线高度钳制在泳道内")
+    else:
+        t.fail("缺少竖线高度钳制")
+
+    # 6. show 数据准备合并遍历（分组与时间范围一次完成）
+    if '_buildTimeRange' not in js:
+        t.ok("时间范围计算已合并进 _groupByThread（减少全量遍历）")
+    else:
+        t.fail("仍存在独立的 _buildTimeRange 全量遍历")
+
+    # 7. 摘要统计缓存（避免每帧 reduce 求和）
+    if '_totalCount' in js:
+        t.ok("摘要统计缓存 _totalCount")
+    else:
+        t.fail("缺少 _totalCount 缓存")
 
 
 # ===== filter.js 高级过滤输入框绑定 =====
