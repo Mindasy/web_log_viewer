@@ -71,6 +71,10 @@ jobs:
             tools/update-tool.sh
             tools/update-tool.zsh
             tools/update-tool.bat
+            tools/callstack/extract_callstack.py
+            tools/callstack/perf_to_callstack.py
+            tools/callstack/collect_perf_callstack.sh
+            tools/callstack/doxygen_callstack.py
           fail_on_unmatched_files: true
           make_latest: true
           generate_release_notes: true

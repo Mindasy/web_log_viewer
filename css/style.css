@@ -1423,6 +1423,317 @@ body {
   white-space: nowrap;
 }
 
+/* 调用栈视图（issue #56） */
+#callstack-view {
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+.callstack-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.callstack-toolbar button {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 11px;
+}
+.callstack-toolbar button:hover { background: var(--bg-hover); color: var(--text-primary); }
+#callstack-file-label { color: var(--text-muted); font-size: 11px; }
+.callstack-tip { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+.cs-flow-search-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+#cs-flow-search {
+  width: 130px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  outline: none;
+}
+#cs-flow-search:focus { border-color: var(--accent); }
+#cs-flow-search.highlight { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,0,0,0.1); }
+.cs-flow-search-count { color: var(--text-muted); font-size: 10px; min-width: 30px; }
+#callstack-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 4px 12px 8px;
+  font-size: 12px;
+  user-select: none;
+}
+#callstack-tree ul { list-style: none; margin: 0; padding-left: 16px; }
+#callstack-tree > ul { padding-left: 4px; }
+.cs-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: default;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+.cs-line:hover { background: var(--bg-hover); }
+.cs-line.has-logs { cursor: pointer; }
+.cs-node.selected > .cs-line {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+}
+.cs-toggle {
+  width: 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.cs-name { color: var(--text-primary); }
+.cs-node.selected > .cs-line .cs-name { color: #fff; }
+.cs-count {
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--accent);
+}
+.cs-node.selected > .cs-line .cs-count { color: rgba(255,255,255,0.85); }
+#callstack-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 2;
+  padding: 24px;
+}
+
+/* 调用栈流程图模式：按 时间→进程→线程→函数段 泳道展示 */
+.cs-view-toggle.active {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent) !important;
+}
+#callstack-flow {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+#callstack-flow-svg,
+.cs-flow-scroll {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+  user-select: none;
+  background: var(--bg-primary);
+  position: relative;
+  padding: 6px 4px 16px;
+}
+.cs-flow-group {
+  margin-bottom: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.cs-flow-group-title {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+.cs-flow-lane {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px dashed var(--border-color);
+  min-width: 100%;
+}
+.cs-flow-lane:last-child { border-bottom: none; }
+.cs-flow-lane-title {
+  flex-shrink: 0;
+  min-width: 110px;
+  max-width: 180px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-flow-lane-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  min-width: 0;
+}
+.cs-flow-arrow {
+  color: var(--accent);
+  font-size: 14px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.cs-flow-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.cs-flow-seg:hover { border-color: var(--accent); background: var(--bg-hover); }
+.cs-flow-seg.selected {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.1);
+}
+.cs-flow-seg .fn { font-weight: 600; color: var(--text-primary); }
+.cs-flow-seg.selected .fn { color: #fff; }
+.cs-flow-seg .fcnt { font-size: 10px; color: var(--accent); }
+.cs-flow-seg.selected .fcnt { color: rgba(255,255,255,0.9); }
+
+/* 函数段状态标注：左侧色条 + 状态图标 + 级别徽标（人性化柔和配色） */
+.cs-seg-bar {
+  display: inline-block;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  margin: -4px 2px -4px -10px;
+}
+.cs-flow-seg.status-none .cs-seg-bar { background: transparent; }
+.cs-flow-seg.status-trace .cs-seg-bar { background: #8fa3b0; }
+.cs-flow-seg.status-info .cs-seg-bar { background: #5c9dbd; }
+.cs-flow-seg.status-warn .cs-seg-bar { background: #d9a03c; }
+.cs-flow-seg.status-error .cs-seg-bar { background: #d9706b; }
+.cs-flow-seg.status-fatal .cs-seg-bar { background: #c0392b; }
+.cs-seg-status { font-size: 11px; flex-shrink: 0; }
+.cs-flow-seg.status-warn .cs-seg-status { color: #b8860b; }
+.cs-flow-seg.status-error .cs-seg-status { color: #c0392b; }
+.cs-flow-seg.status-fatal .cs-seg-status { color: #a93226; }
+.cs-seg-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #fff;
+  background: rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+.cs-flow-seg.status-warn { background: rgba(217, 160, 60, 0.14); border-color: rgba(217, 160, 60, 0.5); }
+.cs-flow-seg.status-error { background: rgba(217, 112, 107, 0.16); border-color: rgba(217, 112, 107, 0.55); }
+.cs-flow-seg.status-fatal { background: rgba(192, 57, 43, 0.2); border-color: rgba(192, 57, 43, 0.6); color: #7b241c; }
+.cs-flow-seg.status-error .fn { color: #7b241c; }
+.cs-flow-seg.status-fatal .fn { color: #641e16; }
+
+.cs-flow-seg.search-hit {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+  background: rgba(52, 152, 219, 0.15);
+}
+.cs-flow-seg.search-hit.selected {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.6);
+}
+.cs-flow-seg.search-current {
+  animation: cs-search-pulse 1.2s ease-in-out 2;
+}
+@keyframes cs-search-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent); }
+  50% { box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.5); }
+}
+.cs-flow-seg.search-hidden { display: none; }
+.cs-flow-lane.search-hidden { display: none; }
+.cs-flow-group.search-hidden { display: none; }
+.cs-flow-arrow.search-hidden { display: none; }
+#callstack-flow-detail {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+}
+.cs-detail-header {
+  position: sticky;
+  top: 0;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cs-detail-header .cs-detail-count { color: var(--text-muted); font-weight: normal; }
+.cs-detail-header .cs-detail-close {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+.cs-detail-header .cs-detail-close:hover { color: var(--text-primary); }
+.cs-detail-list { padding: 4px 0; }
+.cs-detail-item {
+  display: flex;
+  gap: 8px;
+  padding: 3px 10px;
+  align-items: baseline;
+  cursor: pointer;
+}
+.cs-detail-item:hover { background: var(--bg-hover); }
+.cs-detail-item .d-time { color: var(--text-muted); font-size: 10px; flex-shrink: 0; }
+.cs-detail-item .d-level {
+  width: 42px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.cs-detail-item .d-msg { color: var(--text-primary); word-break: break-all; }
+.cs-detail-empty { padding: 12px; color: var(--text-muted); text-align: center; }
+
 #timeline-tooltip {
   position: fixed;
   background: var(--bg-surface);
