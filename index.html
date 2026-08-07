@@ -109,6 +109,7 @@
       <div class="col col-level" data-col="level">级别</div>
       <div class="col col-pid" data-col="pid">进程ID</div>
       <div class="col col-tid" data-col="tid">线程ID</div>
+      <div class="col col-tag" data-col="tag">标签</div>
       <div class="col col-source" data-col="source">来源</div>
       <div class="col col-message" data-col="message">消息</div>
     </div>
@@ -152,6 +153,13 @@
         <div class="detail-value-wrap">
           <span class="detail-value" id="detail-tid">-</span>
           <button class="btn-copy-field" data-field="tid" data-label="线程ID" title="复制线程ID">📋</button>
+        </div>
+      </div>
+      <div class="detail-field">
+        <label>标签</label>
+        <div class="detail-value-wrap">
+          <span class="detail-value" id="detail-tag">-</span>
+          <button class="btn-copy-field" data-field="tag" data-label="标签" title="复制标签">📋</button>
         </div>
       </div>
       <div class="detail-field">
@@ -247,8 +255,10 @@
         <button id="btn-timeline-zoom-out">🔍-</button>
         <button id="btn-timeline-fit">↔️ 适应</button>
       </div>
-      <button id="btn-timeline-minimize" title="最小化（保留视图状态）">—</button>
-      <button id="btn-close-timeline">✕</button>
+      <div class="timeline-header-actions">
+        <button id="btn-timeline-minimize" title="最小化（保留视图状态）">—</button>
+        <button id="btn-close-timeline">✕</button>
+      </div>
     </div>
     <canvas id="timeline-canvas"></canvas>
   </div>

@@ -697,6 +697,7 @@ body {
 .col-level { width: 70px; min-width: 60px; }
 .col-pid { width: 80px; min-width: 60px; }
 .col-tid { width: 80px; min-width: 60px; }
+.col-tag { width: 90px; min-width: 70px; }
 .col-source { width: 200px; min-width: 140px; }
 .col-message { flex: 1; min-width: 200px; }
 .col-dynamic { flex: none; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
@@ -796,6 +797,7 @@ body {
 .grid-row .col-level { font-weight: 700; }
 .grid-row .col-pid { color: var(--text-secondary); font-size: 11px; }
 .grid-row .col-tid { color: var(--text-secondary); font-size: 11px; }
+.grid-row .col-tag { color: var(--text-secondary); font-size: 11px; }
 .grid-row .col-source { color: var(--text-secondary); font-size: 11px; }
 .grid-row .col-message { font-size: 12px; }
 
@@ -1313,6 +1315,14 @@ body {
   flex-wrap: wrap;
   gap: 4px 8px;
   padding: 8px 12px;
+}
+/* 最小化/关闭按钮固定在头部最右端，不参与 space-between 分散布局 */
+.timeline-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 @keyframes slideInRight {
   from { transform: translateX(40px); opacity: 0.4; }
@@ -3429,7 +3439,7 @@ body {
 .about-footer a:hover { text-decoration: underline; }
 
 @media (max-width: 800px) {
-  .col-pid, .col-tid, .col-source { display: none; }
+  .col-pid, .col-tid, .col-tag, .col-source { display: none; }
   #detail-panel.expanded { width: 280px; min-width: 280px; }
   .wide-popup { width: 95vw !important; }
   #timeline-panel { width: 100vw; }
