@@ -75,6 +75,7 @@ jobs:
             tools/callstack/perf_to_callstack.py
             tools/callstack/collect_perf_callstack.sh
             tools/callstack/doxygen_callstack.py
+            tools/source_link/index_source.py
           fail_on_unmatched_files: true
           make_latest: true
           generate_release_notes: true

@@ -24,6 +24,7 @@
     <span class="separator"></span>
     <button id="btn-stats" title="统计信息">📊 统计</button>
     <button id="btn-timeline" title="时间线视图">📈 时间线</button>
+    <button id="btn-source" title="源码查看与项目导入">📄 源码</button>
     <span class="separator"></span>
     <button id="btn-toggle-files" title="显示/隐藏文件列表">📁 文件</button>
     <button id="btn-column-settings" title="列设置">📊 列</button>
@@ -166,6 +167,7 @@
         <label>来源</label>
         <div class="detail-value-wrap">
           <span class="detail-value" id="detail-source">-</span>
+          <button id="btn-view-source" title="查看对应源代码行（需先导入项目源码）" style="display:none;">📄</button>
           <button class="btn-copy-field" data-field="source" data-label="来源" title="复制来源">📋</button>
         </div>
       </div>
@@ -309,6 +311,26 @@
 
 <!-- 时间线最小化后的悬浮按钮 -->
 <div id="timeline-minimized-btn" style="display:none;" title="恢复时间线">📈 时间线</div>
+
+<!-- 源码查看器面板 (弹出, 非模态停靠) -->
+<div id="source-viewer-panel" class="popup-panel large-popup" style="display:none;">
+  <div class="popup-header">
+    <span>📄 源码查看器</span>
+    <div class="sv-import-actions">
+      <button id="btn-source-import-archive" title="选择源码压缩包 (zip/tar.gz，可由 tools/source_link/index_source.py 生成)">📦 导入源码包</button>
+      <button id="btn-source-import-dir" title="选择项目目录（浏览器递归读取源码文件）">📁 导入目录</button>
+      <span id="sv-project-label" class="sv-project-label"></span>
+    </div>
+    <button id="btn-close-source-viewer" title="关闭">✕</button>
+  </div>
+  <div id="sv-body">
+    <div id="sv-tree"></div>
+    <div id="sv-code-wrap">
+      <div id="sv-code"></div>
+    </div>
+  </div>
+  <div id="sv-status" class="popup-footer"></div>
+</div>
 
 <!-- 时间线 tooltip（位于面板外，避免被 overflow/transform 裁剪） -->
 <div id="timeline-tooltip" style="display:none;"></div>
@@ -1063,6 +1085,8 @@
 <input type="file" id="file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
 <input type="file" id="merge-file-input" accept=".log,.txt,.csv,.json,.xml,.gz,.zip,.rar,.tar,.tar.gz,.tgz" multiple style="display:none;" />
 <input type="file" id="callstack-file-input" accept=".txt,.log,.stack,.callstack" style="display:none;" />
+<input type="file" id="source-archive-input" accept=".zip,.tar,.tar.gz,.tgz" style="display:none;" />
+<input type="file" id="source-dir-input" webkitdirectory style="display:none;" />
 
 <script src="lib/jszip/jszip.min.js"></script>
 <script src="lib/fflate/fflate.umd.js"></script>
@@ -1076,6 +1100,8 @@
 <script src="js/timeline.js"></script>
 <script src="js/thread_timeline.js"></script>
 <script src="js/callstack.js"></script>
+<script src="js/source_link.js"></script>
+<script src="js/source_viewer.js"></script>
   <script src="js/view_manager.js"></script>
   <script src="js/stats.js"></script>
 <script src="js/app.js"></script>
