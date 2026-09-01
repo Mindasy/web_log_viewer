@@ -25,6 +25,8 @@ const App = {
     Timeline.init();
     ThreadTimeline.init();
     CallStack.init();
+    SourceLink.init();
+    SourceViewer.init();
     // 窗口大小变化时重绘时间线
     window.addEventListener('resize', Utils.debounce(() => {
       this._resizeActiveTimeline();
@@ -1717,8 +1719,17 @@ const App = {
         if (f.key === 'level') {
           valEl.className = `detail-value level-${val}`;
         }
+        if (f.key === 'source') {
+          // 有来源时可查看对应源码行（是否命中由 SourceLink 判断）
+          const btn = document.getElementById('btn-view-source');
+          if (btn) btn.style.display = '';
+        }
       } else {
         container.style.display = 'none';
+        if (f.key === 'source') {
+          const btn = document.getElementById('btn-view-source');
+          if (btn) btn.style.display = 'none';
+        }
       }
     }
 
