@@ -490,6 +490,10 @@ const CallStack = {
         html += `<span class="d-time">${time}</span>`;
         html += `<span class="d-level" style="background:${this._levelColor(e.level)}">${e.level}</span>`;
         html += `<span class="d-msg"></span>`;
+        // v2：source 可解析时提供「查看代码」入口
+        if (e.source && typeof SourceLink !== 'undefined' && SourceLink.parseSource(e.source).file) {
+          html += `<span class="d-src" data-idx="${e.index}" title="查看对应源代码行">📄</span>`;
+        }
         html += `</div>`;
       }
       html += '</div>';
@@ -501,6 +505,13 @@ const CallStack = {
       const e = entries[i];
       const msg = item.querySelector('.d-msg');
       if (msg && e) msg.textContent = e.message || e.raw || '';
+      const srcBtn = item.querySelector('.d-src');
+      if (srcBtn && e) {
+        srcBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          SourceLink.openSource(e.source);
+        });
+      }
       item.addEventListener('click', () => this._locateEntry(e));
     });
   },

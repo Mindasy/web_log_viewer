@@ -395,9 +395,14 @@ def _(t, flags):
             "selectRow 支持 center 选项")
     t.check('this.selectRow(idx, { center: true })' in src,
             "scrollToEntry 使用居中定位")
-    t.check("row.addEventListener('click', () => {\n      this.selectRow(displayIndex);" in src
-            or "row.addEventListener('click', () => {\n      this.selectRow(displayIndex);\n    });" in src,
-            "行点击使用普通选中（不居中）")
+    # v2：行点击支持 source 链接委托；普通点击仍为普通选中（不居中）
+    t.check("row.addEventListener('click', (e) => {" in src
+            or "row.addEventListener('click', (ev) => {" in src,
+            "行点击处理接收事件对象（支持链接委托）")
+    t.check("closest('.sv-link-source')" in src,
+            "点击 source 链接走打开源码分支")
+    t.check("this.selectRow(displayIndex);" in src,
+            "普通点击使用 selectRow（不居中）")
     # 不再无条件居中：selectRow 体内不含旧的无条件居中注释
     t.check('计算居中位置，确保目标行始终可见' not in src,
             "已移除点击即居中的逻辑")

@@ -226,8 +226,8 @@ def _(t, flags):
         ('_highlightLine', '轻量语法高亮'),
         ('_countRelated', '相关日志统计'),
         ('_onStatusClick', '状态栏过滤该文件日志'),
-        ('scrollIntoView', '目标行滚动居中'),
-        ('_omittedBar', '大文件省略条'),
+        ('scrollIntoView', '目标行滚动定位'),
+        ('_applyView', '虚拟滚动视口计算（v2 替代 MVP 截断）'),
     ]:
         t.check(frag in js, f"source_viewer.js 包含 {desc}")
 

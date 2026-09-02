@@ -69,6 +69,11 @@ const SourceLink = {
     if (btnDir) btnDir.addEventListener('click', () => dirInput && dirInput.click());
     const btnView = document.getElementById('btn-view-source');
     if (btnView) btnView.addEventListener('click', () => this.viewSelectedSource());
+    // 反向索引 toggle「仅日志相关」
+    const relatedCb = document.getElementById('sv-only-related');
+    if (relatedCb) {
+      relatedCb.addEventListener('change', () => this.setOnlyRelated(relatedCb.checked));
+    }
   },
 
   // ===== 过滤规则（目录拖拽 / 无索引压缩包时使用） =====
@@ -100,7 +105,13 @@ const SourceLink = {
 
   // ===== 导入 =====
 
-  async importArchive(file) {
+  // 目录索引分片大小（每片交给事件循环让出，避免阻塞 UI）
+  DIR_BATCH: 1500,
+
+  async importArchive(file, opts) {
+    opts = opts || {};
+    const onlyRelated = opts.onlyRelated !== undefined ? !!opts.onlyRelated : !!this._onlyRelated;
+    const refSet = onlyRelated ? this._getLogRefSet() : null;
     Utils.showLoading('正在解压源码包...');
     try {
       const allFiles = await ArchiveHandler.extract(file);
@@ -117,44 +128,125 @@ const SourceLink = {
         const path = f.name.replace(/^\.\//, '');
         if (!path || path === 'source-index.json' || seen.has(path)) continue;
         seen.add(path);
+        if (this._shouldSkip(path)) continue;
+        if (refSet && !this._matchesLogRef(path, refSet)) continue;
         entries.push({ path, data: f.data, size: f.data.length });
       }
-      this._buildIndex(entries, index, 'zip', file.name);
-      Utils.showToast(`已导入源码包 ${file.name}（${this.files.length} 个文件）`, 'success', 2500);
+      if (onlyRelated && !entries.length && seen.size > 0) {
+        Utils.showToast('未匹配到日志引用的文件，回退为全量索引', 'warn', 3000);
+        this.setOnlyRelated(false);
+        return this.importArchive(file, { onlyRelated: false });
+      }
+      this._buildIndex(entries, index, 'zip', file.name, { refMode: onlyRelated });
+      Utils.showToast(`已导入源码包 ${file.name}（${this.files.length} 个文件${onlyRelated ? '，日志相关' : ''}）`, 'success', 2500);
     } catch (e) {
       Utils.showToast('源码包导入失败: ' + e.message, 'error');
     }
     Utils.hideLoading();
   },
 
-  async importDirectory(fileList) {
+  async importDirectory(fileList, opts) {
     const arr = Array.from(fileList || []);
     if (!arr.length) return;
+    opts = opts || {};
     const rootName = (arr[0].webkitRelativePath || arr[0].name || '项目').split('/')[0];
-    Utils.showLoading('正在索引项目目录...');
+    const onlyRelated = opts.onlyRelated !== undefined ? !!opts.onlyRelated : !!this._onlyRelated;
+    const refSet = onlyRelated ? this._getLogRefSet() : null;
+    Utils.showLoading('正在索引项目目录 0/' + arr.length + '...');
     try {
-      const entries = [];
       const seen = new Set();
-      for (const f of arr) {
-        const rel = (f.webkitRelativePath || f.name || '').replace(/\\/g, '/');
-        // webkitRelativePath 形如 "rootName/src/main.cpp"，去掉根目录名
-        const path = rel.split('/').slice(1).join('/');
-        if (!path || seen.has(path)) continue;
-        seen.add(path);
-        entries.push({ path, file: f, size: f.size });
+      const candidates = [];
+      for (let s = 0; s < arr.length; s += this.DIR_BATCH) {
+        const end = Math.min(s + this.DIR_BATCH, arr.length);
+        for (let k = s; k < end; k++) {
+          const f = arr[k];
+          const rel = (f.webkitRelativePath || f.name || '').replace(/\\/g, '/');
+          // webkitRelativePath 形如 "rootName/src/main.cpp"，去掉根目录名
+          const path = rel.split('/').slice(1).join('/');
+          if (!path || seen.has(path)) continue;
+          seen.add(path);
+          if (this._shouldSkip(path)) continue;
+          if (refSet && !this._matchesLogRef(path, refSet)) continue;
+          candidates.push({ path, file: f, size: f.size });
+        }
+        await this._yield();
+        Utils.showLoading(`正在索引项目目录 ${end}/${arr.length}...`);
       }
-      this._buildIndex(entries, null, 'dir', rootName);
-      Utils.showToast(`已导入项目目录 ${rootName}（${this.files.length} 个源码文件）`, 'success', 2500);
+      if (onlyRelated && !candidates.length && seen.size > 0) {
+        Utils.showToast('未匹配到日志引用的文件，回退为全量索引', 'warn', 3000);
+        this.setOnlyRelated(false);
+        return this.importDirectory(fileList, { onlyRelated: false });
+      }
+      this._buildIndex(candidates, null, 'dir', rootName, { refMode: onlyRelated });
+      Utils.showToast(`已导入项目目录 ${rootName}（${this.files.length} 个源码文件${onlyRelated ? '，日志相关' : ''}）`, 'success', 2500);
     } catch (e) {
       Utils.showToast('项目目录导入失败: ' + e.message, 'error');
     }
     Utils.hideLoading();
   },
 
+  // 让出主线程（分片间调度）
+  _yield() {
+    return new Promise((resolve) => {
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(resolve, { timeout: 60 });
+      else setTimeout(resolve, 0);
+    });
+  },
+
+  // ===== 反向索引（仅日志相关文件） =====
+
+  setOnlyRelated(checked) {
+    this._onlyRelated = !!checked;
+    const cb = document.getElementById('sv-only-related');
+    if (cb) cb.checked = !!checked;
+    const cnt = document.getElementById('sv-related-count');
+    if (cnt) cnt.textContent = checked ? this._relatedCountText() : '';
+  },
+
+  // 日志 source 引用集（与 resolve 同一套键规则，大小写归一）
+  _getLogRefSet() {
+    if (this._logRefSetCache) return this._logRefSetCache;
+    const set = new Set();
+    const entries = (typeof LogParser !== 'undefined' && LogParser.entries) || [];
+    for (const e of entries) {
+      if (!e || !e.source) continue;
+      const p = this.parseSource(e.source);
+      if (!p.file) continue;
+      const f = p.file.replace(/\\/g, '/');
+      const lower = f.toLowerCase();
+      set.add(lower);
+      set.add(lower.split('/').pop());
+      // Java 类/包名（无扩展名含点）→ 包路径映射键，如 com.example.Service → com/example/service.java
+      const hasExt = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|java|py|go|rs|js|jsx|ts|tsx|kt|kts|swift|cs|rb|php|scala|lua|pl|sh|sql)$/i.test(f);
+      if (!f.includes('/') && !hasExt && f.includes('.')) {
+        set.add(f.replace(/\./g, '/').toLowerCase() + '.java');
+      }
+    }
+    this._logRefSetCache = set;
+    return set;
+  },
+
+  invalidateLogRef() {
+    this._logRefSetCache = null;
+  },
+
+  _relatedCountText() {
+    const n = this._getLogRefSet().size;
+    return n ? `（日志引用 ${n} 个文件）` : '（日志无引用）';
+  },
+
+  // 目录/压缩包内的文件是否被日志引用（basename 或整路径命中）
+  _matchesLogRef(path, refSet) {
+    const lower = path.toLowerCase();
+    const base = lower.split('/').pop();
+    return refSet.has(base) || refSet.has(lower);
+  },
+
   // 统一建索引：entries = [{path, data|file, size}]；index 为 CLI 生成的索引（可选）
-  _buildIndex(entries, index, mode, bundleName) {
+  _buildIndex(entries, index, mode, bundleName, meta) {
     this.mode = mode;
     this.bundleName = bundleName || '';
+    this._refMode = !!(meta && meta.refMode);
     this.files = [];
     this._byPath = new Map();
     this._byBasename = new Map();
@@ -214,8 +306,10 @@ const SourceLink = {
     this._byPath = null;
     this.mode = '';
     this.bundleName = '';
+    this._refMode = false;
     this.stats = null;
     this.excluded = null;
+    this.invalidateLogRef();
     if (SourceViewer) SourceViewer.renderTree();
   },
 
