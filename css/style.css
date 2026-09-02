@@ -4000,3 +4000,91 @@ body {
   color: var(--accent);
 }
 #btn-view-source:hover { color: var(--accent-hover); }
+
+/* ===== v2：源码查看器增强（懒加载树 / 虚拟滚动 / 链接入口） ===== */
+
+/* 文件树：顶部过滤框 + 滚动列表 */
+#sv-tree {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.sv-tree-toolbar {
+  padding: 6px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.sv-tree-toolbar input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.sv-tree-toolbar input:focus { border-color: var(--accent); }
+#sv-tree-list {
+  flex: 1;
+  overflow: auto;
+  padding: 6px;
+}
+.sv-tree-group-label:hover { background: var(--bg-hover); }
+
+/* 代码区虚拟滚动：固定行高 20px（与 SourceViewer.LINE_H 同步） */
+#sv-code {
+  padding: 0;
+}
+.sv-lines { display: block; }
+.sv-spacer { height: 0; }
+.sv-line {
+  height: 20px;
+  line-height: 20px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  align-items: stretch;
+}
+.sv-line-num,
+.sv-code-text {
+  line-height: 20px;
+}
+.sv-code-text { white-space: pre; }
+
+/* 反向索引 toggle（面板头部） */
+.sv-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sv-toggle:hover { color: var(--accent); }
+.sv-related-count { color: var(--text-muted); font-size: 10px; }
+
+/* 预处理行（C/C++ #include 等）整行浅色 */
+.sv-pre { color: var(--text-muted); }
+
+/* 网格 source 列可点击链接 */
+.sv-link-source {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.sv-link-source:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+/* 调用栈流程图详情项「查看代码」 */
+.cs-detail-item .d-src {
+  cursor: pointer;
+  margin-left: 6px;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+.cs-detail-item .d-src:hover { opacity: 1; }

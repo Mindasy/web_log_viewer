@@ -1166,6 +1166,10 @@ const App = {
 
   onDataLoaded() {
     this.bookmarks = [];
+    // 日志变更后，反向索引引用集缓存失效（下次导入前重建）
+    if (typeof SourceLink !== 'undefined' && SourceLink.invalidateLogRef) {
+      SourceLink.invalidateLogRef();
+    }
     LogFilter.resetSearch();
     LogFilter.state.sortColumn = null;
     LogFilter.state.sortDirection = 'asc';

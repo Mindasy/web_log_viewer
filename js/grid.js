@@ -665,7 +665,13 @@ const LogGrid = {
       html += `<div class="col col-tag"${w('tag')} title="${this.escapeHtml(entry.tag || '-')}">${this._hlText(entry.tag || '-', 'tag', entry.index, hlCache)}</div>`;
     }
     if (this.isColumnVisible('source')) {
-      html += `<div class="col col-source"${w('source')} title="${this.escapeHtml(entry.source || '-')}">${this._hlText(entry.source || '-', 'source', entry.index, hlCache)}</div>`;
+      const src = entry.source || '';
+      let cell = this._hlText(src || '-', 'source', entry.index, hlCache);
+      // v2：source 可解析为代码位置时渲染为可点击链接（不依赖是否已导入源码）
+      if (src && typeof SourceLink !== 'undefined' && SourceLink.parseSource(src).file) {
+        cell = `<span class="sv-link-source" title="查看对应源代码行">${cell}</span>`;
+      }
+      html += `<div class="col col-source"${w('source')} title="${this.escapeHtml(src || '-')}">${cell || '-'}</div>`;
     }
     if (this.isColumnVisible('message')) {
       const msg = entry.message || entry.raw;
@@ -684,7 +690,16 @@ const LogGrid = {
     row.dataset.index = entry.index;
     row.dataset.displayIndex = displayIndex;
     row.innerHTML = html;
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (e) => {
+      // v2：点击 source 链接 → 选中该行并打开源码查看器（不改变任何过滤）
+      const link = e.target.closest ? e.target.closest('.sv-link-source') : null;
+      if (link && entry.source) {
+        this.selectRow(displayIndex);
+        if (typeof SourceLink !== 'undefined' && typeof App !== 'undefined') {
+          SourceLink.openSource(entry.source);
+        }
+        return;
+      }
       this.selectRow(displayIndex);
     });
     row.addEventListener('dblclick', () => {

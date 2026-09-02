@@ -319,12 +319,22 @@
     <div class="sv-import-actions">
       <button id="btn-source-import-archive" title="选择源码压缩包 (zip/tar.gz，可由 tools/source_link/index_source.py 生成)">📦 导入源码包</button>
       <button id="btn-source-import-dir" title="选择项目目录（浏览器递归读取源码文件）">📁 导入目录</button>
+      <label class="sv-toggle" title="仅索引日志 source 中出现的文件（适合超大项目，无命中自动回退全量）">
+        <input type="checkbox" id="sv-only-related" />
+        <span>仅日志相关</span>
+        <span id="sv-related-count" class="sv-related-count"></span>
+      </label>
       <span id="sv-project-label" class="sv-project-label"></span>
     </div>
     <button id="btn-close-source-viewer" title="关闭">✕</button>
   </div>
   <div id="sv-body">
-    <div id="sv-tree"></div>
+    <div id="sv-tree">
+      <div class="sv-tree-toolbar">
+        <input type="text" id="sv-tree-search" placeholder="🔍 过滤文件..." />
+      </div>
+      <div id="sv-tree-list"></div>
+    </div>
     <div id="sv-code-wrap">
       <div id="sv-code"></div>
     </div>
