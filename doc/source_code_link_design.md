@@ -83,6 +83,8 @@ tools/source_link/index_source.py  — 扫描项目 → 过滤 → 生成源码�
 | A. CLI 索引工具 | `index_source.py <项目路径> -o source.zip` | 大项目、可脚本化 | MVP（已确认） |
 | B. 压缩包上传 | 上传 zip/tar.gz，前端解压时按规则过滤 | 中小项目 | MVP（已确认） |
 | C. 目录拖拽 | `webkitdirectory` 递归读取，前端实时索引 | 中小项目、免 CLI | MVP（已确认） |
+| D. 远程服务 | `server.py --project <path>`（远程部署 + 端口转发） | 远程开发（VSCode Remote-SSH 等） | v3-1 |
+| E. HTTP 索引 URL | 输入 `source-index.json` 的 URL，前端按相对路径拉取 | 任意 HTTP 静态托管（nginx 等） | v3-1 |
 
 统一入口：工具栏「📄 源码」→ 源码面板顶部导入区（按钮：选择源码包 / 选择目录）。
 
@@ -235,14 +237,36 @@ python3 tools/source_link/index_source.py <项目路径> [-o source-bundle.zip] 
 | `js/callstack.js` | 详情项「查看代码」按钮 |
 | `js/source_link.js` | 索引切片异步（超大目录不卡 UI） |
 
-### v3：服务端模式 + 自定义规则管理
+### v3：服务端模式基础 + 自定义规则管理
 
 | 文件 | 改动 |
 |---|---|
-| `server.py` | `--project <path>` 参数 + `/source/*` 静态路由 |
-| `js/source_link.js` | 服务端模式拉取索引/文件（`fetch`） |
+| `server.py` | `--project <path>` 参数 + `/source/*` 静态路由（索引 + 源码文件） |
+| `js/source_link.js` | 服务端数据源拉取（`fetch`）；数据源抽象为 `zip / dir / server / http` 四种模式 |
 | `js/source_viewer.js` | 排除规则 UI 管理（面板内增删并重新过滤） |
 | `tools/source_link/index_source.py` | 增量索引/缓存 |
+
+### v3-1：远程服务器代码适配（VSCode Remote-SSH 等场景）
+
+**场景**：远程开发模式下日志与源码均在服务器，本机浏览器无法直接读远程文件系统。
+
+**数据源形态（两种都支持）**：
+
+| 形态 | 说明 | 使用方式 |
+|---|---|---|
+| `server`（server.py） | 远程执行 `server.py --project <远程路径>` | VSCode 端口转发远程端口到本地，浏览器访问 `http://localhost:<转发端口>/` |
+| `http`（任意 HTTP URL） | 先托管 `source-index.json` + 源码文件（nginx/静态服务均可） | 源码面板输入索引 URL，前端按相对路径拉取 |
+
+**改动清单**
+
+| 文件 | 改动 |
+|---|---|
+| `server.py` | `--project <path>` 扫描远程目录生成索引；`/source/index.json`、`/source/files/<path>` 提供索引与源码；`/api/logs?file=<相对路径>` 远程加载日志（与源码同源）；可加简单鉴权（可选） |
+| `js/source_link.js` | 新增 `importFromServer(baseUrl)` / `importFromHttp(indexUrl)`：拉取索引与文件内容（懒加载）；`resolve/getFileText` 对远程数据源走 `fetch` |
+| `js/source_viewer.js` | 导入区支持「远程服务」与「HTTP 索引 URL」两种入口；显示远程地址与连接状态 |
+| `doc/usage-examples.md` | 补充远程场景用法（端口转发、任意 HTTP 托管） |
+
+**测试**：`test_11_remote_source.py` —— `server.py --project` 冒烟（索引/源码/日志路由）+ 前端数据源抽象静态断言。
 
 ---
 
@@ -258,6 +282,8 @@ python3 tools/source_link/index_source.py <项目路径> [-o source-bundle.zip] 
 | 二进制/非文本 | 拒绝展示，提示文件类型 |
 | 被排除文件被引用 | 在排除明细中可查，可追加保留 |
 | 导入后重新加载日志 | 索引保留（不随日志清除）；清空按钮独立 |
+| 远程数据源不可达 | Toast 提示 + 显示连接失败信息与重试 |
+| 远程日志加载失败 | 提示日志文件路径不存在或权限不足 |
 
 ---
 
