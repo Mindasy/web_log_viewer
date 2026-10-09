@@ -243,6 +243,12 @@ const App = {
       panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
     });
 
+    // 活动过滤条：清除全部
+    const btnClearFilters = document.getElementById('btn-clear-all-filters');
+    if (btnClearFilters) {
+      btnClearFilters.addEventListener('click', () => this.clearAllFilters());
+    }
+
     // 保存视图
     document.getElementById('btn-save-view').addEventListener('click', () => {
       this.saveCurrentSearchAsView();
@@ -546,6 +552,12 @@ const App = {
         this.refresh();
       }
     });
+
+    // 同线程过滤并定位（独占；Alt+Shift+T 为叠加）
+    const btnLocateThread = document.getElementById('btn-locate-thread');
+    if (btnLocateThread) {
+      btnLocateThread.addEventListener('click', () => this.locateSameThread(false));
+    }
 
     document.getElementById('btn-toggle-bookmark').addEventListener('click', () => {
       const selected = this.getSelectedEntry();
@@ -1093,6 +1105,16 @@ const App = {
           Utils.showToast('请先打开文件', 'error');
         }
       }
+      // Alt+T: 同线程过滤并定位（独占）；Alt+Shift+T: 叠加（保留现有条件）
+      // 使用 e.code（物理键），避免 macOS Option+T 产生特殊字符导致 e.key 不匹配
+      if (e.altKey && e.code === 'KeyT') {
+        const tag = (e.target && e.target.tagName) || '';
+        const editable = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+        if (!editable) {
+          e.preventDefault();
+          this.locateSameThread(!!e.shiftKey);
+        }
+      }
       // Escape: 关闭详情面板、内联编辑器或导入对话框
       if (e.key === 'Escape') {
         const editor = document.getElementById('pm-editor');
@@ -1522,6 +1544,222 @@ const App = {
     const isThread = activeMode && activeMode.dataset.mode === 'thread';
     if (isThread) ThreadTimeline.locateEntry(entry);
     else Timeline.locateEntry(entry);
+  },
+
+  // ===== 同线程过滤并定位（Alt+T 独占 / Alt+Shift+T 叠加） =====
+  //
+  // 独占：退出视图并清空搜索/PID/级别/时间/文件/方法等条件，仅保留线程过滤
+  // 叠加：保留现有条件，追加线程过滤
+  // 再次触发同一线程：恢复触发前的完整过滤快照（可逆）
+  locateSameThread(additive) {
+    const entry = this.getSelectedEntry();
+    if (!entry) {
+      Utils.showToast('请先选择一条日志', 'error');
+      return;
+    }
+    const key = String(entry.thread || entry.tid || '').trim();
+    if (!key) {
+      Utils.showToast('该日志无线程信息', 'error');
+      return;
+    }
+    const st = LogFilter.state;
+    // 再次触发同一线程 → 恢复触发前的过滤快照（撤销）
+    if (st.threadFilter === key && this._threadLocateBackup) {
+      Object.assign(st, this._threadLocateBackup);
+      this._threadLocateBackup = null;
+      this._threadLocateKey = '';
+      this._syncFilterInputsFromState();
+      this.refresh();
+      LogGrid.scrollToEntry(entry);
+      Utils.showToast('已恢复触发前的过滤条件', 'success');
+      return;
+    }
+    // 先深拷贝「触发前」的完整状态（后续退出视图会重置撤销快照，故最后再写入）
+    const backup = JSON.parse(JSON.stringify(st));
+    if (!additive) {
+      // 独占：退出视图 + 清其他条件，确保看到该线程全量
+      if (typeof ViewManager !== 'undefined' && ViewManager.isInView()) ViewManager.clear();
+      st.searchText = '';
+      st.pidFilter = '';
+      st.sourceFilter = '';
+      st.messageFilter = '';
+      st.methodFilter = '';
+      st.sourceFileFilter = '';
+      st.timeFrom = '';
+      st.timeTo = '';
+      st.sortColumn = null;
+      st.sortDirection = 'asc';
+      const levels = st.levels || {};
+      for (const lv of Object.keys(levels)) levels[lv] = true;
+      const searchInput = document.getElementById('search-input');
+      if (searchInput) searchInput.value = '';
+      LogFilter.resetSearch();
+    }
+    // 写入撤销快照与线程过滤：state 存原始线程名，转义交由 LogFilter.buildRegex 统一处理
+    // （避免对已是转义形态的字符串二次转义，导致含正则元字符的线程名匹配为 0）
+    this._threadLocateBackup = backup;
+    this._threadLocateKey = key;
+    st.threadFilter = key;
+    this._syncFilterInputsFromState();
+    this.refresh();
+    const located = LogGrid.scrollToEntry(entry);
+    // 独占清除了 pidFilter：若线程时间线面板打开，需同步刷新其数据源
+    if (!additive) {
+      const panel = document.getElementById('timeline-panel');
+      const activeMode = document.querySelector('.timeline-mode-btn.active');
+      if (panel && panel.style.display !== 'none' && activeMode &&
+          activeMode.dataset.mode === 'thread' && typeof ThreadTimeline !== 'undefined') {
+        ThreadTimeline._refreshFromPidSelect();
+      }
+    }
+    const modeTxt = additive ? '已叠加线程过滤（原条件保留）' : '仅显示该线程日志';
+    Utils.showToast(`${modeTxt}：${key} · 再次触发可撤销${located ? '' : '（该行已被过滤条件排除）'}`, 'success', 3000);
+  },
+
+  // 将 LogFilter.state 同步到过滤栏各输入框与级别 chips
+  _syncFilterInputsFromState() {
+    const st = LogFilter.state;
+    const setVal = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.value = v == null ? '' : v;
+    };
+    setVal('search-input', st.searchText);
+    setVal('filter-pid', st.pidFilter);
+    setVal('filter-source', st.sourceFilter);
+    setVal('filter-message', st.messageFilter);
+    setVal('filter-time-from', st.timeFrom);
+    setVal('filter-time-to', st.timeTo);
+    // 线程过滤：state 存原始线程名，直接回显
+    const tfEl = document.getElementById('filter-thread');
+    if (tfEl) tfEl.value = st.threadFilter || '';
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+      const cb = chip.querySelector('input');
+      if (cb) cb.checked = st.levels[chip.dataset.level] !== false;
+    });
+  },
+
+  // ===== 活动过滤条（展示当前生效条件，支持单个/整体清除） =====
+
+  _truncateLabel(s, n) {
+    const t = String(s == null ? '' : s);
+    return t.length > n ? t.slice(0, n) + '…' : t;
+  },
+
+  // 线程过滤的展示值：由本功能设置时展示原始线程名
+  _afThreadLabel() {
+    const st = LogFilter.state;
+    if (this._threadLocateKey && st.threadFilter === this._threadLocateKey) {
+      return this._threadLocateKey;
+    }
+    return st.threadFilter;
+  },
+
+  renderActiveFilters() {
+    const box = document.getElementById('active-filters');
+    const chips = document.getElementById('af-chips');
+    if (!box || !chips) return;
+    const st = LogFilter.state;
+    const items = [];
+    if (st.searchText) {
+      items.push({
+        label: `🔍 搜索: ${this._truncateLabel(st.searchText, 24)}`,
+        clear: () => {
+          st.searchText = '';
+          const el = document.getElementById('search-input');
+          if (el) el.value = '';
+          LogFilter.resetSearch();
+        },
+      });
+    }
+    if (st.threadFilter) {
+      items.push({
+        label: `🧵 线程: ${this._truncateLabel(this._afThreadLabel(), 24)}`,
+        clear: () => {
+          st.threadFilter = '';
+          // 手动清除线程条件后撤销快照失效，避免恢复出意外状态
+          this._threadLocateBackup = null;
+          this._threadLocateKey = '';
+        },
+      });
+    }
+    if (st.pidFilter) {
+      items.push({ label: `🔢 PID: ${this._truncateLabel(st.pidFilter, 24)}`, clear: () => { st.pidFilter = ''; } });
+    }
+    if (st.sourceFilter) {
+      items.push({ label: `📦 来源: ${this._truncateLabel(st.sourceFilter, 24)}`, clear: () => { st.sourceFilter = ''; } });
+    }
+    if (st.messageFilter) {
+      items.push({ label: `💬 消息: ${this._truncateLabel(st.messageFilter, 24)}`, clear: () => { st.messageFilter = ''; } });
+    }
+    if (st.methodFilter) {
+      items.push({ label: `🎯 方法: ${this._truncateLabel(st.methodFilter, 20)}`, clear: () => { st.methodFilter = ''; } });
+    }
+    if (st.sourceFileFilter) {
+      items.push({
+        label: `📄 文件: ${this._truncateLabel(st.sourceFileFilter, 24)}`,
+        clear: () => { st.sourceFileFilter = ''; this.renderFilesList(); },
+      });
+    }
+    if (st.timeFrom || st.timeTo) {
+      items.push({
+        label: `⏱ 时间: ${st.timeFrom || '起'} ~ ${st.timeTo || '止'}`,
+        clear: () => { st.timeFrom = ''; st.timeTo = ''; },
+      });
+    }
+    const hiddenLevels = Object.keys(st.levels || {}).filter(k => st.levels[k] === false);
+    if (hiddenLevels.length) {
+      items.push({
+        label: `🚫 级别: 隐藏 ${hiddenLevels.join('/')}`,
+        clear: () => { hiddenLevels.forEach(k => { st.levels[k] = true; }); },
+      });
+    }
+    if (!items.length) {
+      box.style.display = 'none';
+      chips.innerHTML = '';
+      return;
+    }
+    box.style.display = 'flex';
+    chips.innerHTML = items.map((it, i) =>
+      `<span class="af-chip" title="${this.escapeHtml(it.label)}">${this.escapeHtml(it.label)}` +
+      `<span class="af-x" data-i="${i}" title="清除该条件">✕</span></span>`
+    ).join('');
+    chips.querySelectorAll('.af-x').forEach(x => {
+      x.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const it = items[parseInt(x.dataset.i, 10)];
+        if (!it) return;
+        it.clear();
+        this._syncFilterInputsFromState();
+        this.refresh();
+        Utils.showToast('已清除该过滤条件', 'success', 1500);
+      });
+    });
+  },
+
+  // 清除全部过滤条件（不退出视图；视图可经面包屑回退）
+  clearAllFilters() {
+    const st = LogFilter.state;
+    st.searchText = '';
+    st.pidFilter = '';
+    st.threadFilter = '';
+    st.sourceFilter = '';
+    st.messageFilter = '';
+    st.methodFilter = '';
+    st.sourceFileFilter = '';
+    st.timeFrom = '';
+    st.timeTo = '';
+    const levels = st.levels || {};
+    for (const k of Object.keys(levels)) levels[k] = true;
+    const si = document.getElementById('search-input');
+    if (si) si.value = '';
+    LogFilter.resetSearch();
+    this._threadLocateBackup = null;
+    this._threadLocateKey = '';
+    this._syncFilterInputsFromState();
+    this.renderFilesList();
+    this.refresh();
+    this.updateSearchStats();
+    Utils.showToast('已清除全部过滤条件', 'success');
   },
 
   // ===== 解析器配置 =====
@@ -2356,15 +2594,29 @@ const App = {
       const viewEntries = ViewManager.getCurrentEntries();
       const filtered = LogFilter.apply(viewEntries);
       LogGrid.setData(filtered);
+      // 视图内编辑过滤条件后固化到当前视图快照，切换视图时不丢失
+      ViewManager.captureToCurrentView();
     } else {
       LogGrid.refresh();
     }
     this.updateSearchStats();
     this._updateSaveViewButton();
+    this.renderActiveFilters();
+  },
+
+  // 视图栈变化后的统一收尾：失效线程定位撤销快照 + 同步过滤栏与活动过滤条。
+  // 视图切换/退出会整体改写 LogFilter.state，必须同时作废线程定位的撤销快照，
+  // 否则后续再触发同线程定位会误命中「恢复快照」逻辑。
+  onViewChanged() {
+    this._threadLocateBackup = null;
+    this._threadLocateKey = '';
+    this._syncFilterInputsFromState();
+    this.renderActiveFilters();
   },
 
   // 供 ViewManager 调用：直接设置视图数据
   setViewData(entries) {
+    this.onViewChanged();
     LogGrid.setData(entries);
     this.updateSearchStats();
     this._updateSaveViewButton();

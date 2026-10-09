@@ -4000,3 +4000,59 @@ body {
   color: var(--accent);
 }
 #btn-view-source:hover { color: var(--accent-hover); }
+
+/* ===== 活动过滤条（当前生效过滤条件，可单个/整体清除） ===== */
+#active-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 10px;
+  border-top: 1px dashed var(--border-color);
+}
+.af-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.af-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.af-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.af-x {
+  cursor: pointer;
+  opacity: 0.65;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.af-x:hover { opacity: 1; color: var(--accent-hover); }
+.af-clear {
+  font-size: 11px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.af-clear:hover { color: var(--error); border-color: var(--error); }

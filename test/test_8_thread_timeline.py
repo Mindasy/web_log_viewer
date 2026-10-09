@@ -455,20 +455,28 @@ def _(t, flags):
 
 @suite.test("ViewManager.clear 同步过滤输入框")
 def _(t, flags):
-    """回归：清除视图后过滤输入框（搜索/PID/线程）必须与 state 同步清空，
+    """回归：清除视图后过滤输入框（搜索/PID/线程等）必须与 state 同步清空，
     避免界面残留旧过滤文本。"""
     vm_path = os.path.join(ROOT, 'js', 'view_manager.js')
     js = open(vm_path, encoding='utf-8').read()
+    app_js = open(os.path.join(ROOT, 'js', 'app.js'), encoding='utf-8').read()
 
     clear_idx = js.find('clear() {')
     if clear_idx >= 0:
         seg = js[clear_idx:clear_idx + 400]
-        if '_syncFilterInputs' in seg and "pidFilter: ''" in seg:
-            t.ok("clear() 同步清空过滤输入框")
+        if '_clearFilterState' in seg and 'App.onViewChanged' in seg:
+            t.ok("clear() 清空过滤条件并同步过滤栏（委托 App.onViewChanged）")
         else:
-            t.fail("clear() 未同步过滤输入框")
+            t.fail("clear() 未同步过滤条件")
     else:
         t.fail("未找到 ViewManager.clear")
+
+    # clear() 委托的 App.onViewChanged 负责把 state 回显到全部输入框
+    oc_idx = app_js.find('onViewChanged() {')
+    if oc_idx >= 0 and '_syncFilterInputsFromState' in app_js[oc_idx:oc_idx + 400]:
+        t.ok("App.onViewChanged 同步过滤栏输入框")
+    else:
+        t.fail("App.onViewChanged 未同步过滤栏输入框")
 
     # clear() 后 isInView 应为 false（视图栈清空 + currentIndex=-1）
     if 'this.stack = []' in js and 'this.currentIndex = -1' in js:
@@ -2272,7 +2280,7 @@ def _(t, flags):
     else:
         t.fail("点击方法标签未设置 methodFilter")
 
-    if 'LogFilter.state.threadFilter = Utils.escapeRegex(threadName)' in js:
+    if 'LogFilter.state.threadFilter = threadName' in js:
         t.ok("进入线程详情同步 threadFilter")
     else:
         t.fail("进入线程详情未同步 threadFilter")
