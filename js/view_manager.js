@@ -5,9 +5,53 @@ const ViewManager = {
   currentIndex: -1,    // 当前视图索引（-1 = 全局视图）
   MAX_DEPTH: 10,       // 最大视图深度
 
+  // 视图快照包含的结构性过滤字段（搜索属临时查询，不纳入快照）
+  SNAPSHOT_KEYS: [
+    'pidFilter', 'threadFilter', 'sourceFilter', 'messageFilter',
+    'methodFilter', 'sourceFileFilter', 'timeFrom', 'timeTo',
+    'sortColumn', 'sortDirection'
+  ],
+
   // 视图对象结构
-  // { name: string, entries: [], searchText: string, pidFilter: string,
-  //   threadFilter: string, levelFilter: object, timestamp: number }
+  // { name: string, entries: [], snapshot: object, timestamp: number }
+
+  // 深拷贝结构性过滤条件（levels 单独拷贝），作为视图的过滤快照
+  _captureSnapshot(src) {
+    const s = src || LogFilter.state;
+    const snap = { levels: { ...(s.levels || {}) } };
+    for (const k of this.SNAPSHOT_KEYS) {
+      const v = s[k];
+      snap[k] = (v && typeof v === 'object') ? JSON.parse(JSON.stringify(v)) : (v === undefined ? '' : v);
+    }
+    return snap;
+  },
+
+  // 将快照整体回写到 LogFilter.state（搜索始终清空）
+  _restoreSnapshot(snap) {
+    const st = LogFilter.state;
+    for (const k of this.SNAPSHOT_KEYS) {
+      st[k] = (snap && snap[k] !== undefined) ? snap[k] : '';
+    }
+    st.levels = (snap && snap.levels) ? { ...snap.levels } : { ...st.levels };
+    st.searchText = '';
+    LogFilter.resetSearch();
+  },
+
+  // 清空全部结构性过滤条件（回到全局视图）
+  _clearFilterState() {
+    const st = LogFilter.state;
+    for (const k of this.SNAPSHOT_KEYS) st[k] = '';
+    st.sortColumn = null;
+    for (const k of Object.keys(st.levels || {})) st.levels[k] = true;
+    st.searchText = '';
+    LogFilter.resetSearch();
+  },
+
+  // 把当前 state 的结构条件固化到当前视图快照（视图内编辑可持久）
+  captureToCurrentView() {
+    if (this.currentIndex < 0 || !this.stack[this.currentIndex]) return;
+    this.stack[this.currentIndex].snapshot = this._captureSnapshot();
+  },
 
   // 创建并推入新视图
   pushView(name, entries, filterSnapshot) {
@@ -22,17 +66,15 @@ const ViewManager = {
     this.stack.push({
       name,
       entries,
-      searchText: filterSnapshot.searchText || '',
-      pidFilter: filterSnapshot.pidFilter || '',
-      threadFilter: filterSnapshot.threadFilter || '',
-      levelFilter: filterSnapshot.levels ? { ...filterSnapshot.levels } : {},
+      snapshot: this._captureSnapshot(filterSnapshot),
       timestamp: Date.now(),
     });
     this.currentIndex = this.stack.length - 1;
     // 创建视图后清空当前搜索内容（过滤状态已固化到视图数据）
     LogFilter.state.searchText = '';
     LogFilter.resetSearch();
-    this._syncFilterInputs(this.stack[this.currentIndex]);
+    // 用快照回写结构性条件，保证界面显示与视图一致
+    this._restoreSnapshot(this.stack[this.currentIndex].snapshot);
     App.setViewData(this.stack[this.currentIndex].entries);
     this.renderBreadcrumb();
     return true;
@@ -93,13 +135,9 @@ const ViewManager = {
   // 恢复全局视图
   _resetToGlobal() {
     this.currentIndex = -1;
-    // 清空过滤状态
-    LogFilter.state.searchText = '';
-    LogFilter.state.pidFilter = '';
-    LogFilter.state.threadFilter = '';
-    LogFilter.resetSearch();
-    // 同步 DOM 输入框
-    this._syncFilterInputs({ pidFilter: '', threadFilter: '' });
+    // 清空全部结构性过滤条件
+    this._clearFilterState();
+    App.onViewChanged();
     App.refresh();
     this.renderBreadcrumb();
   },
@@ -111,25 +149,9 @@ const ViewManager = {
       return;
     }
     const view = this.stack[this.currentIndex];
-    // 恢复过滤状态（但不触发搜索，因为视图数据已确定）
-    LogFilter.state.searchText = '';
-    LogFilter.state.pidFilter = view.pidFilter;
-    LogFilter.state.threadFilter = view.threadFilter;
-    LogFilter.resetSearch();
-    // 同步 DOM 输入框，保持界面一致性
-    this._syncFilterInputs(view);
-    // 设置视图数据
+    // 整体恢复该视图的过滤快照（含级别/来源/方法/时间/排序等全部结构条件）
+    this._restoreSnapshot(view.snapshot);
     App.setViewData(view.entries);
-  },
-
-  // 同步 DOM 过滤输入框到视图状态
-  _syncFilterInputs(view) {
-    const searchInput = document.getElementById('search-input');
-    if (searchInput) searchInput.value = '';
-    const pidInput = document.getElementById('filter-pid');
-    if (pidInput) pidInput.value = view.pidFilter || '';
-    const threadInput = document.getElementById('filter-thread');
-    if (threadInput) threadInput.value = view.threadFilter || '';
   },
 
   // 渲染面包屑
@@ -237,12 +259,9 @@ const ViewManager = {
     this.stack = [];
     this.currentIndex = -1;
     this.renderBreadcrumb();
-    LogFilter.state.searchText = '';
-    LogFilter.state.pidFilter = '';
-    LogFilter.state.threadFilter = '';
-    LogFilter.resetSearch();
-    // 同步过滤输入框，保持界面一致（清除/重新加载后不残留旧过滤文本）
-    this._syncFilterInputs({ pidFilter: '', threadFilter: '' });
+    // 清空全部结构性过滤条件并同步过滤栏（线程定位撤销快照一并失效）
+    this._clearFilterState();
+    App.onViewChanged();
   },
 
   _escapeHtml(str) {

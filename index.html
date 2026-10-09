@@ -87,6 +87,11 @@
     <input type="datetime-local" id="filter-time-to" title="结束时间" />
     <button id="btn-advanced-filter" class="toggle-btn" title="高级过滤">⚙️</button>
   </div>
+  <div id="active-filters" style="display:none;">
+    <span class="af-label">当前过滤:</span>
+    <div class="af-chips" id="af-chips"></div>
+    <button id="btn-clear-all-filters" class="af-clear" title="清除全部过滤条件">清除全部</button>
+  </div>
 </div>
 
 <!-- 主内容区 -->
@@ -188,6 +193,7 @@
       <div class="detail-actions">
         <button id="btn-copy-entry">📋 复制整行</button>
         <button id="btn-filter-similar">🔍 过滤相似</button>
+        <button id="btn-locate-thread" title="独占该线程日志并定位（Alt+T）· 保留现有条件用 Alt+Shift+T">🧵 同线程定位</button>
         <button id="btn-toggle-bookmark">🔖 书签</button>
       </div>
     </div>

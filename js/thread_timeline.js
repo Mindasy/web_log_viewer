@@ -211,8 +211,8 @@ const ThreadTimeline = {
     // 清除之前的过滤条件，进入全新上下文
     LogFilter.state.sourceFilter = '';
     LogFilter.state.methodFilter = '';
-    // 同步背景日志：只显示该线程的日志
-    LogFilter.state.threadFilter = Utils.escapeRegex(threadName);
+    // 同步背景日志：只显示该线程的日志（存原始线程名，转义由 LogFilter.buildRegex 统一处理）
+    LogFilter.state.threadFilter = threadName;
     this._groupByMethod(thread.entries);
     this._clampScrollY();
     this._updateDetailHeader();
@@ -606,7 +606,7 @@ const ThreadTimeline = {
           } else {
             LogFilter.state.methodFilter = '';
             LogFilter.state.sourceFilter = '';
-            LogFilter.state.threadFilter = Utils.escapeRegex(name);
+            LogFilter.state.threadFilter = name;
             App.refresh();
           }
         }
