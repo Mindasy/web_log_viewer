@@ -228,14 +228,94 @@ python3 tools/source_link/index_source.py <项目路径> [-o source-bundle.zip] 
 
 目录拖拽：`input[webkitdirectory]` 的 FileList 自带 `webkitRelativePath`，无需手动递归；内容存 File 引用，点击时再读（懒加载）。
 
-### v2：查看器增强 + 全入口
+### v2：查看器增强 + 全入口（详细设计）
 
-| 文件 | 改动 |
+> 目标：#61。MVP 只打通"详情面板 → 查看代码"。v2 将入口扩展到网格与调用栈，并解决大项目下的渲染性能（大文件代码、大目录索引、大文件树）。
+
+**v2.1 统一入口层（数据流）**
+
+```
+SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast 引导）
+   ├── LogGrid.createRow      （source 列链接 → 选中行 + openSource）
+   ├── CallStack.showSegDetail（详情项 📄 → openSource）
+   └── App.showDetail         （MVP 既有入口）
+```
+
+**v2.2 网格 source 列可点击（grid.js / app.js / css）**
+
+| 项 | 设计 |
 |---|---|
-| `js/source_viewer.js` | 文件树、大文件虚拟滚动、语法高亮增强 |
-| `js/grid.js` | source 列可点击渲染 |
-| `js/callstack.js` | 详情项「查看代码」按钮 |
-| `js/source_link.js` | 索引切片异步（超大目录不卡 UI） |
+| 渲染 | `createRow` 的 source 分支：`SourceLink.parseSource(entry.source)` 可解析（`file` 非空）时，把 `_hlText` 结果包进 `<span class="sv-link-source">`（保留搜索高亮 span） |
+| 点击 | 复用行 `click` 委托：`e.target.closest('.sv-link-source')` 命中 → `App.selectAndShowSource(entry, displayIndex)`（先 `selectRow` 再 `SourceLink.openSource`），不改变任何过滤；未命中走原 `selectRow` |
+| 无源码 | 链接始终渲染（可解析即可点）；`openSource` 内部对未导入场景 Toast 引导（MVP 已内置），无需网格层分支 |
+| 样式 | `.sv-link-source`：accent 色、点状下划线、hover 实线（`css`） |
+| 性能 | 网格为虚拟滚动，可视区每次仅 ~40 行参与 `createRow`，`parseSource` 为轻量正则，开销可忽略 |
+
+**v2.3 调用栈流程图详情项「查看代码」（callstack.js / css）**
+
+| 项 | 设计 |
+|---|---|
+| 渲染 | `showSegDetail` 每项 html：`e.source` 存在时在 `.d-msg` 后追加 `<span class="d-src" data-idx="N" title="查看代码">📄</span>` |
+| 点击 | 循环绑定 `.d-src`：`e.stopPropagation()` → `SourceLink.openSource(entry.source)`；`.cs-detail-item` 原有点击（定位日志）保持 |
+| 样式 | `.cs-detail-item .d-src`：hover accent、与复制按钮区隔 |
+
+**v2.4 查看器：文件树懒加载 + 过滤（source_viewer.js / css）**
+
+- 树数据改为目录节点结构：`{ dir, children: dirs[], files[] }`，仅渲染**已展开目录**的一层，点击目录再渲染子层（替换当前一次性渲染全部文件的实现）；展开状态沿用 `_expandedDirs`
+- 树顶部新增过滤框 `.sv-tree-search`：输入实时过滤当前层（文件名/路径包含，命中高亮；空结果显示"无匹配"）；Esc 清空
+- 打开文件时自动展开其祖先目录并把对应行滚入视野（`open()` 内 `_expandTo(entry.path)`）
+- 性能：单次渲染节点数 ≤ 展开目录总数（默认全部折叠仅显示根层）
+
+**v2.5 查看器：代码区虚拟滚动（source_viewer.js / css）**
+
+- 容器结构改为：`#sv-code-wrap`（overflow:auto）→ 内部 `topSpacer + #sv-code(可视行) + bottomSpacer`；行高固定（`--sv-line-h`，现 1.6 × 12px = 19.2px，建议定 20px）
+- `open()`：`totalLines` → spacers 高度；定位目标行 `scrollTop = (line-1)*lineH - viewH/2`
+- `scroll`（rAF 节流）→ `first = floor(scrollTop/lineH) - BUFFER`，`last = ceil((scrollTop+viewH)/lineH) + BUFFER` → 仅重渲染该区间行（行号 + 高亮），DOM patch 复用或重建片段
+- 保留：目标行 `sv-line-target` 呼吸高亮、点击行状态栏、`_countRelated`
+- 移除 MVP 的 20000 行截断与省略条逻辑（任意大小文件可平滑滚动）
+- 性能：单帧可视 ~50 行 × tokenizer 高亮，可接受；`_highlightLine` 结果按 `(文件,行)` 做 LRU 缓存（可选）
+
+**v2.6 语法高亮增强：跨行注释状态机**
+
+- 现状缺陷：逐行独立 tokenizer，`/* ... */` 跨行时断色；`#include/#define` 等预处理无区分
+- 设计：`SourceViewer._commentState` 布尔 + `_highlightLine(text, lang)` 接收并返回状态（顺序渲染时延续块注释）；块注释内不解析字符串/关键字
+- C/C++ 预处理行（行首 `#`）渲染为 `.sv-pre`（浅灰底）
+- 关键词表按需补 `sql`/`rb`/`php`（现有已含多数语言）
+
+**v2.7 索引切片异步（source_link.js）**
+
+- `importDirectory`：FileList 分片处理（每片 ~1500 项），`requestIdleCallback || setTimeout(…, 0)` 逐片执行 `_shouldSkip` 收集，片间更新进度（`Utils.showLoading('索引中 x/y')`）；完成后一次 `_buildIndex`
+- `importArchive`：zip 解压后过滤与 `_buildIndex` 保持同步（解压本身已异步），超大 zip 时沿用 ArchiveHandler 1GB 上限保护
+- 上限提示：目录文件数 > 20000 时 Toast 建议"改用 CLI 生成源码包"（不阻断）
+- 移除：当前同步 for 循环导致的导入卡顿
+
+**v2.8 反向索引：仅日志相关文件（评审新增项）**
+
+> 超大项目（几万文件）中日志往往只引用少量源码文件；反向模式让索引只覆盖这些文件。
+
+| 项 | 设计 |
+|---|---|
+| 引用集 | `SourceLink._logRefSet`：遍历 `LogParser.entries` 的 `source` → `parseSource` 后收集匹配键（路径尾段 / basename / Java 包路径，与 `resolve` 同一套规则），大小写归一 |
+| 模式开关 | 源码面板导入区 toggle「仅索引日志相关文件（N 个引用）」；未加载日志时禁用；默认关闭（= 现有全量行为） |
+| 目录模式 | 遍历 FileList 元数据时按 `_logRefSet` 过滤（不匹配即跳过），内容仍懒加载 → 即使几万文件也只读少量内容 |
+| zip 模式 | 解压成本在解压本身；过滤在 `_buildIndex` 前按引用集裁剪 |
+| 无匹配回退 | 若引用集与导入树无任何命中 → Toast 提示并**自动回退为全量索引** |
+| 上限 | 命中文件数 > 500 时仍全部索引（命中即小），不受限 |
+| 状态刷新 | `App.onDataLoaded()` 后置 `_logRefSet = null`，下次导入前惰性重建 |
+| 交互反馈 | 索引完成 Toast 显示「已索引 N 个（日志相关）」，树顶 project label 标注模式 |
+
+**v2.9 测试（test_12_source_link_v2.py）**
+
+| 用例 | 断言 |
+|---|---|
+| 网格入口 | grid.js 含 `sv-link-source` 分支与 `closest('.sv-link-source')` 委托；css 含 `.sv-link-source` |
+| 调用栈入口 | callstack.js `showSegDetail` 含 `.d-src` 与 `SourceLink.openSource`；css 含 `.d-src` |
+| 树懒加载 | source_viewer.js 含目录节点结构/`_expandTo`/`.sv-tree-search` |
+| 虚拟滚动 | source_viewer.js 含 spacer/`lineH`/rAF 滚动重算；css 含 spacer |
+| 注释状态机 | source_viewer.js `_highlightLine` 签名含状态参数、含 `.sv-pre` |
+| 异步切片 | source_link.js 含分片常量与 `requestIdleCallback`/`setTimeout` |
+| 反向索引 | source_link.js 含 `_logRefSet`/toggle 分支与自动回退逻辑；index.html/css 含对应 UI |
+| 回归 | `validate.py` 全量（含服务器冒烟） |
 
 ### v3：服务端模式基础 + 自定义规则管理
 
