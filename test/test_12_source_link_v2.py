@@ -10,8 +10,11 @@
   - 反向索引（仅日志相关文件）
 """
 
+import json
 import os
 import re
+import shutil
+import subprocess
 
 from test_runner import ROOT, TestSuite
 
@@ -115,3 +118,60 @@ def _(t, flags):
     t.check('id="sv-only-related"' in html, "index.html 含反向索引 checkbox")
     t.check('.sv-toggle' in css, "css 含 .sv-toggle 样式")
     t.check('SourceLink.invalidateLogRef' in app, "app.js onDataLoaded 重置引用集")
+
+
+@suite.test("设计项补齐：命中高亮 / 超大目录提示 / 树渲染合并")
+def _(t, flags):
+    sv = open(os.path.join(ROOT, 'js', 'source_viewer.js'), encoding='utf-8').read()
+    sl = open(os.path.join(ROOT, 'js', 'source_link.js'), encoding='utf-8').read()
+    css = open(os.path.join(ROOT, 'css', 'style.css'), encoding='utf-8').read()
+    t.check('sv-hit' in sv and '<mark class="sv-hit">' in sv, "树过滤命中片段高亮渲染")
+    t.check('.sv-hit' in css, "css 含 .sv-hit 命中高亮样式")
+    t.check('20000' in sl and '建议改用 CLI' in sl, "超大目录提示改用 CLI（不阻断）")
+    t.check('_renderDirNode' in sv, "树渲染合并为单一递归实现")
+    t.check('_renderDirsRecur' not in sv and '_renderDirsInto' not in sv,
+            "已移除重复的树渲染实现")
+
+
+@suite.test("块注释高亮：可执行回归（span 配对 + 着色正确）")
+def _(t, flags):
+    """运行时执行真实 _highlightLine，验证 v2.6 块注释状态机正确性。"""
+    if not shutil.which('node'):
+        t.ok("未检测到 node，跳过运行时用例")
+        return
+    js_path = os.path.join(ROOT, 'js', 'source_viewer.js')
+    script = r"""
+const fs=require('fs');
+const SV=eval(fs.readFileSync(%s,'utf8')+'\n;SourceViewer');
+let pass=0, fail=0;
+function chk(c,m){ if(c) pass++; else { fail++; console.log('FAIL: '+m); } }
+function balanced(s){ return (s.match(/<span/g)||[]).length === (s.match(/<\/span>/g)||[]).length; }
+// A 单行内联块注释：注释正确闭合，其后代码恢复普通着色
+const A = SV._highlightLine('int x = 1; /* note */ return x;', 'cpp', false);
+chk(balanced(A), 'A span 配对');
+chk(A.indexOf('<span class="sv-com">/* note */</span>') >= 0, 'A 内联注释成对闭合');
+chk(/<\/span>\s*<span class="sv-key">return<\/span>/.test(A), 'A 注释后代码恢复关键字着色');
+// B 块注释起始行（本行无闭合）
+const B = SV._highlightLine('/* open', 'cpp', false);
+chk(balanced(B), 'B span 配对');
+chk(B.endsWith('</span>'), 'B 行尾补闭合');
+// C 块注释中间行（整行注释）
+const C = SV._highlightLine('mid', 'cpp', true);
+chk(balanced(C), 'C span 配对');
+chk(C.indexOf('<span class="sv-com">mid</span>') >= 0, 'C 中间行整体注释色');
+// D 块注释结束行：注释部分着色，其后代码恢复着色
+const D = SV._highlightLine('close */ int y = 2;', 'cpp', true);
+chk(balanced(D), 'D span 配对');
+chk(D.indexOf('<span class="sv-com">close */</span>') >= 0, 'D 结束行注释部分着色');
+chk(/<span class="sv-key">int<\/span>/.test(D), 'D 结束行之后恢复关键字着色');
+console.log('PASS:'+pass+' FAIL:'+fail);
+""" % json.dumps(js_path)
+    proc = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=10)
+    if proc.returncode != 0:
+        t.fail(f"Node.js 执行失败: {proc.stderr.strip()[:300]}")
+        return
+    out = proc.stdout.strip()
+    if 'FAIL:0' in out:
+        t.ok(f"块注释高亮运行时断言全部通过 ({out})")
+    else:
+        t.fail(f"块注释高亮运行时断言失败: {out}")

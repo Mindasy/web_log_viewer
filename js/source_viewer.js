@@ -114,60 +114,11 @@ const SourceViewer = {
       return;
     }
     if (this._filter) this._renderFlat(files, this._filter.toLowerCase());
-    else this._renderDirs(this._buildDirTree(files), 0);
+    else this._renderDirNode(this._buildDirTree(files), 0, this.treeEl);
   },
 
-  _renderDirs(node, depth) {
-    const frag = document.createDocumentFragment();
-    const mk = (cls, text) => {
-      const div = document.createElement('div');
-      div.className = cls;
-      div.textContent = text;
-      return div;
-    };
-    const dirNames = [...node.dirs.keys()].sort();
-    for (const name of dirNames) {
-      const sub = node.dirs.get(name);
-      const open = this._expandedDirs.has(sub.full);
-      const li = document.createElement('div');
-      li.className = 'sv-tree-group';
-      const label = mk('sv-tree-group-label', `${open ? '▾ ' : '▸ '}${name}/`);
-      label.title = sub.full;
-      label.style.paddingLeft = (depth * 14 + 6) + 'px';
-      label.addEventListener('click', () => {
-        if (open) this._expandedDirs.delete(sub.full);
-        else this._expandedDirs.add(sub.full);
-        this.renderTree();
-      });
-      li.appendChild(label);
-      if (open) {
-        const inner = document.createElement('div');
-        this._renderDirsInto(inner, sub, depth + 1);
-        li.appendChild(inner);
-      }
-      frag.appendChild(li);
-    }
-    const fileNames = [...node.files].sort((a, b) => a.basename.localeCompare(b.basename));
-    for (const fe of fileNames) {
-      const item = mk('sv-tree-file' + (this._current && this._current.entry === fe ? ' active' : ''), fe.basename);
-      item.title = fe.path;
-      item.style.paddingLeft = (depth * 14 + 6) + 'px';
-      item.addEventListener('click', () => this._openFile(fe));
-      frag.appendChild(item);
-    }
-    this.treeEl.appendChild(frag);
-  },
-
-  // 递归渲染到指定容器（供展开目录逐层加载）
-  _renderDirsInto(container, node, depth) {
-    const subWrap = document.createElement('div');
-    subWrap.className = 'sv-tree-sub';
-    // 直接复用 _renderDirs 逻辑需要容器；简化：递归到 treeEl 追加
-    this._renderDirsRecur(node, depth, subWrap);
-    container.appendChild(subWrap);
-  },
-
-  _renderDirsRecur(node, depth, container) {
+  // 递归渲染目录节点到指定容器：仅展开的目录才下探（懒加载）
+  _renderDirNode(node, depth, container) {
     const dirNames = [...node.dirs.keys()].sort();
     for (const name of dirNames) {
       const sub = node.dirs.get(name);
@@ -186,7 +137,7 @@ const SourceViewer = {
       if (open) {
         const subEl = document.createElement('div');
         subEl.className = 'sv-tree-sub';
-        this._renderDirsRecur(sub, depth + 1, subEl);
+        this._renderDirNode(sub, depth + 1, subEl);
         container.appendChild(subEl);
       }
     }
@@ -204,16 +155,22 @@ const SourceViewer = {
 
   _renderFlat(files, filter) {
     const frag = document.createDocumentFragment();
+    const esc = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let hit = 0;
     const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
     for (const fe of sorted) {
       const lower = fe.path.toLowerCase();
-      if (!lower.includes(filter)) continue;
+      const idx = lower.indexOf(filter);
+      if (idx < 0) continue;
       hit++;
       const item = document.createElement('div');
       item.className = 'sv-tree-file sv-tree-file-flat' + (this._current && this._current.entry === fe ? ' active' : '');
-      item.textContent = fe.path;
       item.title = fe.path;
+      // 命中片段高亮
+      item.innerHTML =
+        esc(fe.path.slice(0, idx)) +
+        '<mark class="sv-hit">' + esc(fe.path.slice(idx, idx + filter.length)) + '</mark>' +
+        esc(fe.path.slice(idx + filter.length));
       item.addEventListener('click', () => this._openFile(fe));
       frag.appendChild(item);
     }
@@ -423,23 +380,29 @@ const SourceViewer = {
       out += t;
       buf = '';
     };
+    // C/C++ 预处理行（行首 #，且不在块注释内才整体染色）
+    if (isCppLike && !startBlock && text.charCodeAt(0) === 35) { // '#'
+      return '<span class="sv-pre">' + esc(text) + '</span>';
+    }
     const n = text.length;
     let j = 0;
     let inB = !!startBlock;
-    // C/C++ 预处理行（行首 #，处于块注释外才染色）
-    if (isCppLike && !inB && text.charCodeAt(0) === 35) { // '#'
-      return '<span class="sv-pre">' + esc(text) + '</span>';
-    }
+    // 行首已处于块注释：先开注释 span，保证与行尾 </span> 配对
+    if (inB) out += '<span class="sv-com">';
     while (j < n) {
       const c = text[j], c2 = text[j + 1];
       if (inB) {
-        if (c === '*' && c2 === '/') { buf += '*/'; j += 2; inB = false; flush(); continue; }
-        buf += c; j++; continue;
+        // 累积注释文本（块注释内不解析字符串/关键字），直到 */
+        let k = j;
+        while (k < n && !(text[k] === '*' && text[k + 1] === '/')) k++;
+        if (k > j) out += esc(text.slice(j, k));
+        if (k < n) { out += '*/</span>'; j = k + 2; inB = false; }
+        else { j = n; }
+        continue;
       }
       if (c === '/' && c2 === '*') {
         flush();
         out += '<span class="sv-com">/*';
-        buf = '';
         j += 2;
         inB = true;
         continue;
@@ -476,10 +439,7 @@ const SourceViewer = {
       }
       buf += c; j++;
     }
-    if (inB) {
-      out += '<span class="sv-com">' + esc(buf) + '</span>';
-      buf = '';
-    }
+    if (inB) out += '</span>';
     flush();
     return out;
   },

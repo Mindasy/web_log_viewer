@@ -153,6 +153,10 @@ const SourceLink = {
     const onlyRelated = opts.onlyRelated !== undefined ? !!opts.onlyRelated : !!this._onlyRelated;
     const refSet = onlyRelated ? this._getLogRefSet() : null;
     Utils.showLoading('正在索引项目目录 0/' + arr.length + '...');
+    // 超大目录：提示改用 CLI 生成源码包（不阻断，仅建议）
+    if (arr.length > 20000) {
+      Utils.showToast(`目录含 ${Utils.formatNumber(arr.length)} 个文件，建议改用 CLI 生成源码包（tools/source_link/index_source.py）以提速`, 'warn', 4000);
+    }
     try {
       const seen = new Set();
       const candidates = [];
