@@ -32,6 +32,28 @@ python3 server.py
 open http://localhost:8765
 ```
 
+除托管网页外，服务器还可在**服务端模式**下提供远端源码接口（用于日志 → 源码跳转，可选）：
+
+```bash
+# 额外提供 /source/* 源码索引与文件接口
+python3 server.py --project /path/to/your/project
+
+# 仅提供后端接口，不托管网页（页面用静态方式 / GitHub Pages 打开）
+python3 server.py --project /path/to/your/project --no-static
+
+# 其它参数
+python3 server.py --project <dir> --port 9000 --no-browser
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--project <dir>` | 源码目录：启用 `/source/index.json`、`/source/files/<path>` |
+| `--no-static` | 只提供 `/source/*` 后端接口，不托管静态网页 |
+| `--port <n>` | 监听端口（默认 8765） |
+| `--no-browser` | 启动后不自动打开浏览器 |
+
+> 索引逻辑内置于 `server.py`，无需任何额外脚本；`/source/*` 响应带 CORS 头，`file://` 打开的静态页面也能跨域访问。
+
 也可以手动启动：
 
 ```bash
@@ -150,3 +172,7 @@ Pattern 保存在浏览器 IndexedDB 中。清除浏览器数据（Cookies 除�
 ### Q: 为什么有些列是空的？
 
 这是因为某些解析预设不会提取所有字段（例如 Apache 格式没有 pid 字段）。工具会自动隐藏全空的列，你也可以通过右键菜单手动隐藏。
+
+### Q: 如何点击日志跳转到对应源码？
+
+源码跳转需要先提供源码数据源：源码面板（工具栏「📄 源码」）可导入本地源码包 / 目录，或通过服务端（`server.py --project`）、HTTP 索引 URL 加载远端源码。详见 [使用实例 — 实例九](usage-examples.md#实例九日志--源码关联) 与 [实例十](usage-examples.md#实例十远程开发端口转发--仅后端)。未导入源码时，来源列不会显示为可点击链接。
