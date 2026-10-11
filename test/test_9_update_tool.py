@@ -93,9 +93,10 @@ def _(t, flags):
 
     # tools/ 不参与 package.sh 任何打包逻辑（既不在输入也不在排除列表）
     t.check('tools/' not in pkg, "tools/ 不参与 package.sh 打包逻辑")
-    # 确保打包清单仅含运行时文件
-    for f in ['index.html', 'server.py', 'css/', 'lib/', 'js/']:
+    # 确保打包清单仅含运行时文件（压缩/解压已自研，不再依赖 lib/ 第三方库）
+    for f in ['index.html', 'server.py', 'css/', 'js/']:
         t.check(f in pkg, f"打包清单包含 {f}")
+    t.check('lib/' not in pkg, "打包清单不包含第三方 lib/")
 
 
 @suite.test("发布配置 — 三个脚本作为 Release 附件")

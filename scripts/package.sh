@@ -86,7 +86,6 @@ tar -czf "$PACKAGE_FILE" \
     server.py \
     css/ \
     doc/ \
-    lib/ \
     js/ \
 
 FILE_SIZE=$(du -h "$PACKAGE_FILE" | cut -f1)

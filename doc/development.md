@@ -12,7 +12,7 @@ Web Log Viewer 是一个纯前端的日志查看与分析工具。所有代码�
 | CSS Custom Properties | 主题系统 |
 | IndexedDB | Pattern 持久化存储 |
 | Canvas API | 时间线可视化 |
-| Web Workers (fflate) | 压缩包解压 |
+| 自研解压 (inflate/gzip/zip) | 压缩包解压（无第三方依赖） |
 | TextDecoder API | 多编码支持 |
 
 ### 项目结构
@@ -25,6 +25,9 @@ web_log_viewer/
 ├── js/
 │   ├── app.js              # 主应用控制器（事件绑定、面板管理、书签、Pattern、拖放）
 │   ├── archive.js          # 压缩文件解析器（ZIP / tar / gz）
+│   ├── inflate.js          # 自研 raw DEFLATE 解压（RFC 1951）
+│   ├── gzip.js             # 自研 gzip 解压 + CRC32（RFC 1952）
+│   ├── zip.js              # 自研 ZIP 容器解析（含 zip64）
 │   ├── db.js               # IndexedDB 数据库操作
 │   ├── filter.js           # 过滤与搜索引擎
 │   ├── grid.js             # 虚拟滚动日志表格
@@ -32,9 +35,6 @@ web_log_viewer/
 │   ├── stats.js            # 统计信息模块
 │   ├── timeline.js         # 时间线可视化
 │   └── utils.js            # 工具函数
-├── lib/
-│   ├── fflate/             # ZIP/gzip 解压库
-│   └── jszip/              # JSZip 回退解压库
 ├── scripts/
 │   ├── generate_samples.py  # 批量生成测试 ZIP 文件
 │   ├── generate_archives.py # 生成多种格式压缩测试文件

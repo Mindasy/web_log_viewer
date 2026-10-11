@@ -49,53 +49,26 @@ const ArchiveHandler = {
     });
   },
 
-  // ===== ZIP 提取（fflate 优先，JSZip 回退）=====
+  // ===== ZIP 提取（自研 Zip 解析 + inflate）=====
   async _extractZip(u8, fileName) {
-    if (typeof fflate === 'undefined' && typeof JSZip === 'undefined') {
-      throw new Error('未加载 ZIP 解析库（需加载 fflate 或 JSZip）');
+    const zipFiles = Zip.unzipSync(u8);
+    const textFiles = [];
+    for (const name of Object.keys(zipFiles)) {
+      textFiles.push({ name, data: zipFiles[name] });
     }
-
-    const useFflate = typeof fflate !== 'undefined';
-    let textFiles;
-
-    if (useFflate) {
-      const zipFiles = fflate.unzipSync(u8);
-      const allNames = Object.keys(zipFiles);
-      textFiles = [];
-      for (const name of allNames) {
-        textFiles.push({ name, data: zipFiles[name] });
-      }
-    } else {
-      const zip = await JSZip.loadAsync(u8.buffer);
-      const allNames = Object.keys(zip.files);
-      textFiles = [];
-      for (const name of allNames) {
-        const entry = zip.files[name];
-        if (entry.dir) continue;
-        const content = await entry.async('uint8array');
-        textFiles.push({ name, data: content });
-      }
-    }
-
     return this._normalizeFiles(textFiles, fileName, true);
   },
 
   // ===== 单文件 GZ（如 .log.gz）=====
   async _extractSingleGz(u8, fileName) {
-    if (typeof fflate === 'undefined') {
-      throw new Error('未加载 fflate 库，无法解压 .gz 文件');
-    }
-    const decompressed = fflate.gunzipSync(u8);
+    const decompressed = Gzip.gunzipSync(u8);
     const innerName = fileName.replace(/\.gz$/i, '');
     return this._normalizeFiles([{ name: innerName, data: decompressed }], fileName);
   },
 
   // ===== tar.gz / tgz 提取 =====
   async _extractTarGz(u8, fileName) {
-    if (typeof fflate === 'undefined') {
-      throw new Error('未加载 fflate 库，无法解压 .tar.gz 文件');
-    }
-    const decompressed = fflate.gunzipSync(u8);
+    const decompressed = Gzip.gunzipSync(u8);
     const files = this._parseTar(decompressed);
     return this._normalizeFiles(files, fileName, true);
   },
@@ -111,7 +84,7 @@ const ArchiveHandler = {
     let offset = 0;
 
     while (offset + 512 <= u8.length) {
-      const header = u8.slice(offset, offset + 512);
+      const header = u8.subarray(offset, offset + 512);
 
       // 全0 block 表示结束
       if (header[0] === 0) break;
@@ -129,7 +102,8 @@ const ArchiveHandler = {
       offset += 512;
 
       if (typeFlag === '0' || typeFlag === '' || typeFlag === '\0') {
-        const data = u8.slice(offset, offset + size);
+        // 视图而非拷贝：避免为每个文件复制一份字节（tar 数据随解码后整体释放）
+        const data = u8.subarray(offset, offset + size);
         files.push({ name: fullName, data });
       }
 
@@ -143,8 +117,7 @@ const ArchiveHandler = {
     let end = start + len;
     while (end > start && u8[end - 1] === 0) end--;
     if (end <= start) return '';
-    const bytes = u8.slice(start, end);
-    return new TextDecoder('UTF-8').decode(bytes);
+    return new TextDecoder('UTF-8').decode(u8.subarray(start, end));
   },
 
   // ===== 结果统一处理 =====

@@ -9,6 +9,7 @@ suite = TestSuite("JS 结构验证")
 
 JS_FILES = [
     'js/utils.js', 'js/parser.js', 'js/archive.js',
+    'js/inflate.js', 'js/zip.js', 'js/gzip.js',
     'js/filter.js', 'js/grid.js', 'js/timeline.js',
     'js/stats.js', 'js/app.js'
 ]
