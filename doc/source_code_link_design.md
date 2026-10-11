@@ -344,27 +344,49 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 | `test/test_10_source_link.py` | 改为以模块方式加载 `server.py` 断言内置 `build_index` 输出 |
 | `test/test_16_source_link_v3.py` | 移除 CLI 缓存用例，新增 `--no-static` 冒烟 |
 
-### v3-1：远程服务器代码适配（VSCode Remote-SSH 等场景）
+### v3-1：远程日志加载（VSCode Remote-SSH 等场景）
 
-**场景**：远程开发模式下日志与源码均在服务器，本机浏览器无法直接读远程文件系统。
+> 现状：v3 已交付「远程源码」——`server.py --project` + `/source/*` + 标识 API，且索引逻辑已内联（单文件部署、`--no-static` 可只跑后端）。
+> v3-1 补齐「远程日志」：远程开发时日志也在远端，浏览器需从 server 取日志内容后再解析。
 
-**数据源形态（两种都支持）**：
+**场景**：日志与源码都在远端，本机浏览器无法直接读远程文件系统（VSCode Remote-SSH / 容器 / 跳板机）。
 
-| 形态 | 说明 | 使用方式 |
-|---|---|---|
-| `server`（server.py） | 远程执行 `server.py --project <远程路径>` | VSCode 端口转发远程端口到本地，浏览器访问 `http://localhost:<转发端口>/` |
-| `http`（任意 HTTP URL） | 先托管 `source-index.json` + 源码文件（nginx/静态服务均可） | 源码面板输入索引 URL，前端按相对路径拉取 |
+**目标**
+- 浏览器直接从 server 加载远端日志（单文件 / 多文件 / 压缩包），体验与本地拖拽一致。
+- 与源码同源：同一 server、同一标识（`wlv-source`）、同一 CORS 策略；可配 `--no-static` 只跑后端。
+- 只读、限定日志根目录内、可选 token 鉴权。
 
-**改动清单**
+**新增路由（server.py）**
+
+| 路由 | 说明 |
+|---|---|
+| `GET /api/logs?file=<相对路径>` | 返回日志文件内容（`text/plain; charset=utf-8`）；含防目录穿越、体积上限、二进制拒绝 |
+| `GET /api/logs?file=<相对路径>&binary=1` | 以 `application/octet-stream` 返回原始字节（供前端解压 zip/tar.gz） |
+| `GET /api/logs/list` | 列出日志根内候选日志文件（扩展名白名单，最多 N 条） |
+
+- 与 `/source/*` 共用 CORS 头与 `do_OPTIONS` 预检，支持 `file://` 静态页跨域。
+- 启动参数：`--logs-root <dir>`（日志根，默认 = `--project`，未设则当前目录）；`--token <str>`（可选，设后要求 `X-Auth-Token` 头或 `?token=`，否则 401）。
+- 把 `resolve_file` 的穿越防护抽为通用 `_resolve_under(root, rel)`，`/source/files` 与 `/api/logs` 共用。
+
+**前端改动**
 
 | 文件 | 改动 |
 |---|---|
-| `server.py` | `--project <path>` 扫描远程目录生成索引；`/source/index.json`、`/source/files/<path>` 提供索引与源码；`/api/logs?file=<相对路径>` 远程加载日志（与源码同源）；可加简单鉴权（可选） |
-| `js/source_link.js` | 新增 `importFromServer(baseUrl)` / `importFromHttp(indexUrl)`：拉取索引与文件内容（懒加载）；`resolve/getFileText` 对远程数据源走 `fetch` |
-| `js/source_viewer.js` | 导入区支持「远程服务」与「HTTP 索引 URL」两种入口；显示远程地址与连接状态 |
-| `doc/usage-examples.md` | 补充远程场景用法（端口转发、任意 HTTP 托管） |
+| `js/parser.js` | 新增 `mergeTexts(items, cfg, append)`：把已取得的 `{name, text}` 按现有逐文件流程解析（复用 `_splitLines`/`getParser`/格式检测/跳过清单），避免伪造 File 对象 |
+| `js/app.js` | 新增「🌐 远程日志」入口：探测 `/source/ping` → 输入/选择文件 → `fetch` → `mergeTexts`；压缩包走 `binary=1` + `ArchiveHandler`；复用 `onDataLoaded`/视图/过滤 |
+| `index.html` / `css/style.css` | 远程日志入口 UI（地址 + 连接状态 + 文件列表），样式与源码面板一致 |
+| `js/source_link.js` | 复用已配置的 server 地址与探测结果（`sv-server-base` / `_serverState`），避免重复输入 |
 
-**测试**：`test_11_remote_source.py` —— `server.py --project` 冒烟（索引/源码/日志路由）+ 前端数据源抽象静态断言。
+**边界与安全（含非目标）**
+- 非目标：远端写操作、目录递归打包下载、账号体系 / HTTPS 终止（仅可选静态 token）。
+- 拒绝不存在的路径、目录、超限文件（默认 200MB，与本地大文件警告一致）；穿越请求 404。
+- `/api/logs/list` 只列名不返内容；大文件加载前给出体积提示。
+
+**测试**：`test/test_11_remote_source.py`
+- server：`/api/logs` 正常读取、防穿越、二进制/超限拒绝、`--token` 设/未设（401/200）、CORS/OPTIONS。
+- 前端：静态断言（远程日志入口、`mergeTexts`、`binary=1` 走 ArchiveHandler）；node 运行时 `mergeTexts` 解析样例文本（含 `\r\n`）。
+
+**文档**：`doc/usage-examples.md` 增「远程开发（端口转发 + `--no-static`）」；`doc/features.md` 增「日志↔源码关联」「远程日志加载」条目。
 
 ---
 
@@ -372,10 +394,10 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 
 | 场景 | 处理 |
 |---|---|
-| 未导入源码就点查看 | Toast 提示并引导打开源码面板导入 |
+| 未导入源码就点查看 | 未导入时不显示跳转入口（网格 source 列/调用栈 📄/详情按钮均隐藏） |
 | source 无行号 | 定位方法定义行，否则文件首行 |
 | 同名文件多个 | 全部命中列表，默认第一个，可切换 |
-| 项目超大（>1GB/上万文件） | 提示改用 CLI；懒加载；索引切片异步 |
+| 项目超大（>1GB/上万文件） | 提示改用「服务端」模式；懒加载；索引切片异步 |
 | 匹配失败 | 展示 source 原文 + 「未找到」 |
 | 二进制/非文本 | 拒绝展示，提示文件类型 |
 | 被排除文件被引用 | 在排除明细中可查，可追加保留 |
