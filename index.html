@@ -322,17 +322,35 @@
 <div id="source-viewer-panel" class="popup-panel large-popup" style="display:none;">
   <div class="popup-header">
     <span>📄 源码查看器</span>
-    <div class="sv-import-actions">
-      <button id="btn-source-import-archive" title="选择源码压缩包 (zip/tar.gz，可由 tools/source_link/index_source.py 生成)">📦 导入源码包</button>
+    <span id="sv-project-label" class="sv-project-label"></span>
+    <button id="btn-close-source-viewer" title="关闭">✕</button>
+  </div>
+  <div class="sv-toolbar">
+    <div class="sv-toolbar-row">
+      <span class="sv-toolbar-label">本地</span>
+      <button id="btn-source-import-archive" title="选择源码压缩包 (zip/tar.gz，内含源码文件；无 source-index.json 时按默认规则过滤)">📦 导入源码包</button>
       <button id="btn-source-import-dir" title="选择项目目录（浏览器递归读取源码文件）">📁 导入目录</button>
+      <span class="sv-toolbar-spacer"></span>
       <label class="sv-toggle" title="仅索引日志 source 中出现的文件（适合超大项目，无命中自动回退全量）">
         <input type="checkbox" id="sv-only-related" />
         <span>仅日志相关</span>
         <span id="sv-related-count" class="sv-related-count"></span>
       </label>
-      <span id="sv-project-label" class="sv-project-label"></span>
     </div>
-    <button id="btn-close-source-viewer" title="关闭">✕</button>
+    <div class="sv-toolbar-row">
+      <span class="sv-toolbar-label">远程</span>
+      <button id="btn-source-import-server" title="连接 Web Log Viewer 服务端并加载源码（需 server.py --project 启动；静态打开时请在右侧填写服务端地址）">🖥 服务端</button>
+      <button id="btn-source-import-http" title="从任意 HTTP 索引 URL 加载（source-index.json，按同目录相对路径拉取源码）">🔗 HTTP 索引</button>
+      <input type="text" id="sv-remote-url" class="sv-remote-url" placeholder="服务端地址(如 http://localhost:8765) / 索引 URL" />
+      <span id="sv-server-state" class="sv-server-state"></span>
+    </div>
+  </div>
+  <div id="sv-exclude-bar">
+    <span class="sv-excl-label">排除规则:</span>
+    <div id="sv-excl-chips" class="sv-excl-chips"></div>
+    <input type="text" id="sv-excl-input" class="sv-excl-input" placeholder="目录名 或 文件 glob（如 *.md）" />
+    <button id="btn-sv-excl-add" title="添加排除规则并重新过滤">添加</button>
+    <button id="btn-sv-excl-reset" title="清空自定义排除规则">重置</button>
   </div>
   <div id="sv-body">
     <div id="sv-tree">

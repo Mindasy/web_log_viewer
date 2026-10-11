@@ -47,6 +47,23 @@ const SourceViewer = {
         });
       });
     }
+    // 排除规则：添加 / 重置
+    const exclInput = document.getElementById('sv-excl-input');
+    const exclAdd = document.getElementById('btn-sv-excl-add');
+    if (exclAdd && exclInput) {
+      const applyRule = () => {
+        if (SourceLink.addExcludeRule(exclInput.value)) {
+          exclInput.value = '';
+          Utils.showToast('已添加排除规则并重新过滤', 'success', 1500);
+        } else {
+          Utils.showToast('请输入目录名或文件 glob（如 *.md）', 'warn', 1500);
+        }
+      };
+      exclAdd.addEventListener('click', applyRule);
+      exclInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyRule(); });
+    }
+    const exclReset = document.getElementById('btn-sv-excl-reset');
+    if (exclReset) exclReset.addEventListener('click', () => SourceLink.clearExcludeRules());
   },
 
   toggle() {
@@ -75,6 +92,32 @@ const SourceViewer = {
     if (this.statusEl) this.statusEl.innerHTML = html || '';
   },
 
+  // 排除规则条：展示自定义规则（可移除），空则提示默认规则生效
+  renderExcludeBar() {
+    const chips = document.getElementById('sv-excl-chips');
+    if (!chips) return;
+    const dirs = SourceLink._userExcludeDirs || [];
+    const files = SourceLink._userExcludeFiles || [];
+    const items = dirs.map(d => ({ type: 'dir', value: d, label: `📁 ${d}/` }))
+      .concat(files.map(f => ({ type: 'file', value: f, label: `📄 ${f}` })));
+    if (!items.length) {
+      chips.innerHTML = '<span class="sv-excl-empty">默认规则已生效，可添加自定义排除</span>';
+      return;
+    }
+    chips.innerHTML = items.map((it, i) =>
+      `<span class="sv-excl-chip" title="点击移除该规则">${this._escapeHtml(it.label)}` +
+      `<span class="sv-excl-x" data-i="${i}">✕</span></span>`
+    ).join('');
+    chips.querySelectorAll('.sv-excl-x').forEach(x => {
+      x.addEventListener('click', () => {
+        const it = items[parseInt(x.dataset.i, 10)];
+        if (!it) return;
+        SourceLink.removeExcludeRule(it.type, it.value);
+        Utils.showToast('已移除排除规则并重新过滤', 'success', 1200);
+      });
+    });
+  },
+
   // ===== 文件树（懒加载 + 过滤） =====
 
   _buildDirTree(files) {
@@ -98,19 +141,25 @@ const SourceViewer = {
 
   renderTree() {
     if (!this.treeEl) return;
+    this.renderExcludeBar();
     const files = SourceLink.files || [];
     this.treeEl.innerHTML = '';
     if (this.projectLabel) {
       const name = SourceLink.bundleName || '';
       const n = files.length;
       const refTag = SourceLink._refMode ? '（日志相关）' : '';
-      this.projectLabel.textContent = name
-        ? `${name} · ${n} 个源码文件${refTag}`
-        : (n ? `${n} 个源码文件${refTag}` : '未导入源码');
-      this.projectLabel.title = SourceLink.mode === 'dir' ? '项目目录' : '源码包';
+      const badge = SourceLink.MODE_LABELS[SourceLink.mode] || '';
+      if (n) {
+        this.projectLabel.textContent =
+          `${badge ? badge + ' · ' : ''}${name ? name + ' · ' : ''}${n} 个源码文件${refTag}`;
+        this.projectLabel.title = SourceLink.MODE_TITLES[SourceLink.mode] || '';
+      } else {
+        this.projectLabel.textContent = '未导入源码';
+        this.projectLabel.title = '';
+      }
     }
     if (!files.length) {
-      this.treeEl.innerHTML = '<div class="sv-tree-empty">未导入源码<br/>点击右上「📦 导入源码包」<br/>或「📁 导入目录」</div>';
+      this.treeEl.innerHTML = '<div class="sv-tree-empty">未导入源码<br/>使用上方「本地 / 远程」工具条导入</div>';
       return;
     }
     if (this._filter) this._renderFlat(files, this._filter.toLowerCase());

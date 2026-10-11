@@ -1201,7 +1201,18 @@ const App = {
     this.updateFileInfo();
     this.updateButtonStates();
     this.renderFilesList();
-    Utils.showToast(`已加载 ${Utils.formatNumber(LogParser.entries.length)} 条日志`, 'success');
+    const skipped = (typeof LogParser.consumeSkipped === 'function') ? LogParser.consumeSkipped() : [];
+    if (skipped.length) {
+      // 部分文件为空/解析失败：在成功提示中一并告知（不阻断已加载内容）
+      const shown = skipped.slice(0, 3).join('、');
+      const more = skipped.length > 3 ? ` 等 ${skipped.length} 个` : '';
+      Utils.showToast(
+        `已加载 ${Utils.formatNumber(LogParser.entries.length)} 条日志；跳过 ${skipped.length} 个空/失败文件：${shown}${more}`,
+        'warn', 5000
+      );
+    } else {
+      Utils.showToast(`已加载 ${Utils.formatNumber(LogParser.entries.length)} 条日志`, 'success');
+    }
   },
 
   // ===== 实时追踪 =====
@@ -1962,9 +1973,9 @@ const App = {
           valEl.className = `detail-value level-${val}`;
         }
         if (f.key === 'source') {
-          // 有来源时可查看对应源码行（是否命中由 SourceLink 判断）
+          // 有来源且已导入源码时可查看对应源码行（是否命中由 SourceLink 判断）
           const btn = document.getElementById('btn-view-source');
-          if (btn) btn.style.display = '';
+          if (btn) btn.style.display = this._canViewSource() ? '' : 'none';
         }
       } else {
         container.style.display = 'none';
@@ -2026,6 +2037,20 @@ const App = {
       return LogGrid.entries[LogGrid.selectedIndex];
     }
     return null;
+  },
+
+  // 是否已导入源码（决定 source 跳转入口是否可用，未导入时不显示链接）
+  _canViewSource() {
+    return typeof SourceLink !== 'undefined'
+      && typeof SourceLink.isLoaded === 'function' && SourceLink.isLoaded();
+  },
+
+  // 源码导入/清除/排除规则变更后，刷新网格与详情里的源码跳转入口显隐
+  refreshSourceLinks() {
+    if (typeof LogGrid !== 'undefined' && LogGrid.totalRows > 0) LogGrid.render();
+    const btn = document.getElementById('btn-view-source');
+    const entry = this._detailEntry;
+    if (btn && entry) btn.style.display = (entry.source && this._canViewSource()) ? '' : 'none';
   },
 
   // ===== 搜索导航 =====

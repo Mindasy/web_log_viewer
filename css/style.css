@@ -3823,15 +3823,30 @@ body {
   padding: 0;
   overflow: hidden;
 }
-.sv-import-actions {
+/* 两行工具栏：本地离线导入 / 远程数据源 */
+.sv-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.sv-toolbar-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: 12px;
-  flex: 1;
+  flex-wrap: wrap;
   min-width: 0;
 }
-.sv-import-actions button {
+.sv-toolbar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 28px;
+}
+.sv-toolbar-spacer { flex: 1 1 auto; }
+.sv-toolbar button {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
@@ -3840,19 +3855,21 @@ body {
   font-size: 11px;
   cursor: pointer;
   transition: all var(--transition-fast);
+  flex-shrink: 0;
 }
-.sv-import-actions button:hover {
+.sv-toolbar button:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
 .sv-project-label {
   font-size: 11px;
   color: var(--text-muted);
-  margin-left: 6px;
+  margin-left: auto;
+  margin-right: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 260px;
+  max-width: 320px;
 }
 #sv-body {
   display: flex;
@@ -4126,6 +4143,68 @@ body {
 }
 .sv-toggle:hover { color: var(--accent); }
 .sv-related-count { color: var(--text-muted); font-size: 10px; }
+
+/* v3：远程数据源入口 + 排除规则管理 */
+.sv-remote-url {
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 360px;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.sv-remote-url:focus { border-color: var(--accent); }
+.sv-server-state { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+#sv-exclude-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.sv-excl-label { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.sv-excl-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.sv-excl-empty { font-size: 11px; color: var(--text-muted); }
+.sv-excl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+}
+.sv-excl-x { cursor: pointer; opacity: 0.65; font-size: 10px; }
+.sv-excl-x:hover { opacity: 1; color: var(--error); }
+.sv-excl-input {
+  width: 200px;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.sv-excl-input:focus { border-color: var(--accent); }
+#sv-exclude-bar button {
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+#sv-exclude-bar button:hover { color: var(--accent); border-color: var(--accent); }
 
 /* 预处理行（C/C++ #include 等）整行浅色 */
 .sv-pre { color: var(--text-muted); }

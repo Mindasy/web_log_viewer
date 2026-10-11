@@ -1,27 +1,32 @@
 """test_10_source_link.py — 日志与代码行关联 测试用例
 
 覆盖：
-  - CLI 工具 tools/source_link/index_source.py（存在/语法/真实运行生成源码包）
-  - 排除规则（依赖目录/构建产物/配置文件/非源码扩展名）
+  - server.py 内置索引逻辑（排除规则/源码白名单/统计，无外部依赖，可单文件部署）
   - 前端结构（index.html 面板与按钮、app.js 初始化、script 引入）
   - source_link.js 解析与匹配逻辑（静态断言 4 种 source 格式 + 匹配策略）
   - 源码查看器样式
 """
 
-import json
+import importlib.util
 import os
 import py_compile
 import re
-import subprocess
-import tempfile
-import zipfile
 
 from test_runner import ROOT, SAMPLES_DIR, TestSuite
 
 suite = TestSuite("日志与代码行关联 (Source Link)")
 
 SAMPLE_PROJECT = os.path.join(SAMPLES_DIR, 'source_link', 'mini_cpp_demo')
-CLI_TOOL = os.path.join(ROOT, 'tools', 'source_link', 'index_source.py')
+SERVER_PY = os.path.join(ROOT, 'server.py')
+
+
+def _load_server():
+    """以模块方式加载 server.py（顶层不启动服务），复用其内置 build_index"""
+    spec = importlib.util.spec_from_file_location('wlv_server', SERVER_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 # 样例项目中应被索引的源码文件
 EXPECTED_INDEXED = [
@@ -38,109 +43,73 @@ EXPECTED_EXCLUDED = [
 ]
 
 
-@suite.test("CLI 工具存在且语法正确")
+@suite.test("server.py 内置索引逻辑（自包含、无外部依赖）")
 def _(t, flags):
-    t.check(os.path.exists(CLI_TOOL), "tools/source_link/index_source.py 存在")
-    if os.path.exists(CLI_TOOL):
-        try:
-            py_compile.compile(CLI_TOOL, doraise=True)
-            t.ok("index_source.py 语法正确 (py_compile)")
-        except py_compile.PyCompileError as e:
-            t.fail(f"index_source.py 语法错误: {e}")
+    t.check(os.path.exists(SERVER_PY), "server.py 存在")
+    if not os.path.exists(SERVER_PY):
+        return
+    try:
+        py_compile.compile(SERVER_PY, doraise=True)
+        t.ok("server.py 语法正确 (py_compile)")
+    except py_compile.PyCompileError as e:
+        t.fail(f"server.py 语法错误: {e}")
+    src = open(SERVER_PY, encoding='utf-8').read()
+    for frag, desc in [
+        ('def build_index', '内置 build_index'),
+        ('def collect_files', '内置 collect_files'),
+        ('def read_source', '内置 read_source'),
+        ('DEFAULT_EXCLUDE_DIRS', '内置排除目录规则'),
+        ('DEFAULT_EXCLUDE_FILES', '内置排除文件规则'),
+        ('SOURCE_EXTS', '内置源码白名单'),
+        ('LANG_MAP', '内置语言映射'),
+        ('MAX_EXCLUDED_RECORDS', 'excluded 明细上限'),
+    ]:
+        t.check(frag in src, f"server.py 含 {desc}")
+    # 不再依赖外部工具（降低部署成本：server.py 单文件即可运行）
+    t.check('_load_index_source' not in src, "已移除运行时加载外部工具函数")
+    t.check('import index_source' not in src, "server.py 不再 import index_source")
+    t.check(not os.path.exists(os.path.join(ROOT, 'tools', 'source_link')),
+            "已删除 tools/source_link 工具目录")
 
 
-@suite.test("CLI 真实运行生成源码包")
+@suite.test("内置 build_index 生成索引正确性")
 def _(t, flags):
     if not os.path.isdir(SAMPLE_PROJECT):
         t.fail(f"样例项目不存在（先运行 bash test/generate_samples.sh）: {SAMPLE_PROJECT}")
         return
-    with tempfile.TemporaryDirectory() as tmp:
-        out_zip = os.path.join(tmp, 'source-bundle.zip')
-        r = subprocess.run(
-            ['python3', CLI_TOOL, SAMPLE_PROJECT, '-o', out_zip],
-            capture_output=True, text=True, timeout=30,
-        )
-        t.check(r.returncode == 0, "index_source.py 运行成功")
-        if r.returncode != 0:
-            t.fail(f"  错误: {r.stderr.strip()[:300]}")
-            return
-        t.check(os.path.exists(out_zip), "源码包 zip 已生成")
-        if not os.path.exists(out_zip):
-            return
+    index = _load_server().build_index(SAMPLE_PROJECT)
+    t.check(index.get('schema') == 1, "index schema == 1")
+    t.check(index.get('project') == 'mini_cpp_demo', f"index.project = {index.get('project')}")
+    t.check(index.get('generatedAt'), "index 含 generatedAt")
+    files = index['files']
+    paths = [f['path'] for f in files]
+    for p in EXPECTED_INDEXED:
+        t.check(p in paths, f"已索引: {p}")
+    t.check(len(files) == len(EXPECTED_INDEXED),
+            f"索引文件数 {len(files)} == 期望 {len(EXPECTED_INDEXED)}")
 
-        with zipfile.ZipFile(out_zip) as zf:
-            names = zf.namelist()
-            t.check('source-index.json' in names, "zip 内含 source-index.json")
-            t.check('src/main.cpp' in names, "zip 内含源码文件 src/main.cpp")
+    for fe in files:
+        for key in ('path', 'basename', 'size', 'lines', 'lang'):
+            t.check(key in fe, f"索引条目含字段 {key} ({fe.get('path', '?')})")
 
-            index = json.loads(zf.read('source-index.json'))
-            t.check(index.get('schema') == 1, "index schema == 1")
-            t.check(index.get('project') == 'mini_cpp_demo', f"index.project = {index.get('project')}")
-            t.check(index.get('generatedAt'), "index 含 generatedAt")
-            files = index['files']
-            paths = [f['path'] for f in files]
-            for p in EXPECTED_INDEXED:
-                t.check(p in paths, f"已索引: {p}")
-            t.check(len(files) == len(EXPECTED_INDEXED),
-                    f"索引文件数 {len(files)} == 期望 {len(EXPECTED_INDEXED)}")
+    # main.cpp 行数断言
+    main_entry = next((f for f in files if f['path'] == 'src/main.cpp'), None)
+    t.check(main_entry and main_entry.get('lines') == 33,
+            f"src/main.cpp lines == 33 (实际 {main_entry.get('lines') if main_entry else 'N/A'})")
 
-            for fe in files:
-                for key in ('path', 'basename', 'size', 'lines', 'lang'):
-                    t.check(key in fe, f"索引条目含字段 {key} ({fe.get('path', '?')})")
+    # 排除验证：被排除的路径不得出现在 files
+    for bad in EXPECTED_EXCLUDED:
+        t.check(bad not in paths, f"已排除: {bad}")
+    # excluded 明细记录（目录级排除：node_modules / build / .git）
+    excluded_paths = [e['path'] for e in index.get('excluded', [])]
+    for d in ('node_modules', 'build', '.git'):
+        t.check(any(d in p for p in excluded_paths), f"excluded 记录含 {d} 目录")
+    # 统计字段
+    st = index.get('stats', {})
+    t.check(st.get('indexed') == len(EXPECTED_INDEXED), f"stats.indexed == {len(EXPECTED_INDEXED)}")
+    t.check('scanned' in st and 'excludedDirs' in st and 'excludedFiles' in st,
+            "stats 含 scanned/excludedDirs/excludedFiles")
 
-            # main.cpp 行数断言（main 定义在第 10 行）
-            main_entry = next((f for f in files if f['path'] == 'src/main.cpp'), None)
-            t.check(main_entry and main_entry.get('lines') == 33,
-                    f"src/main.cpp lines == 33 (实际 {main_entry.get('lines') if main_entry else 'N/A'})")
-
-            # 排除验证：被排除的路径不得出现在 files
-            all_names = ' | '.join(paths)
-            for bad in EXPECTED_EXCLUDED:
-                t.check(bad not in paths, f"已排除: {bad}")
-            # excluded 明细记录（目录级排除：node_modules / build / .git）
-            excluded_paths = [e['path'] for e in index.get('excluded', [])]
-            for d in ('node_modules', 'build', '.git'):
-                t.check(any(d in p for p in excluded_paths), f"excluded 记录含 {d} 目录")
-            # 统计字段
-            st = index.get('stats', {})
-            t.check(st.get('indexed') == len(EXPECTED_INDEXED), f"stats.indexed == {len(EXPECTED_INDEXED)}")
-            t.check('scanned' in st and 'excludedDirs' in st and 'excludedFiles' in st,
-                    "stats 含 scanned/excludedDirs/excludedFiles")
-
-
-@suite.test("CLI 自定义排除与配置参数")
-def _(t, flags):
-    if not os.path.isdir(SAMPLE_PROJECT):
-        t.fail("样例项目不存在（先运行 bash test/generate_samples.sh）")
-        return
-    with tempfile.TemporaryDirectory() as tmp:
-        # --exclude-dir 追加排除 src 目录 → 应只剩 include/order.h
-        out1 = os.path.join(tmp, 'a.zip')
-        r = subprocess.run(
-            ['python3', CLI_TOOL, SAMPLE_PROJECT, '-o', out1, '--exclude-dir', 'src'],
-            capture_output=True, text=True, timeout=30,
-        )
-        t.check(r.returncode == 0, "--exclude-dir 运行成功")
-        if r.returncode == 0 and os.path.exists(out1):
-            with zipfile.ZipFile(out1) as zf:
-                index = json.loads(zf.read('source-index.json'))
-                paths = [f['path'] for f in index['files']]
-                t.check(paths == ['include/order.h'], f"--exclude-dir src 后仅剩 include/order.h (实际 {paths})")
-        # --config 追加 includeExts：app.ini 变为可索引
-        cfg = os.path.join(tmp, 'cfg.json')
-        with open(cfg, 'w', encoding='utf-8') as f:
-            json.dump({'includeExts': ['.ini']}, f)
-        out2 = os.path.join(tmp, 'b.zip')
-        r = subprocess.run(
-            ['python3', CLI_TOOL, SAMPLE_PROJECT, '-o', out2, '--config', cfg],
-            capture_output=True, text=True, timeout=30,
-        )
-        t.check(r.returncode == 0, "--config 运行成功")
-        if r.returncode == 0 and os.path.exists(out2):
-            with zipfile.ZipFile(out2) as zf:
-                index = json.loads(zf.read('source-index.json'))
-                paths = [f['path'] for f in index['files']]
-                t.check('config/app.ini' in paths, "--config includeExts 后 app.ini 被索引")
 
 
 @suite.test("index.html 前端结构（面板/按钮/script）")
@@ -248,9 +217,11 @@ def _(t, flags):
         t.check(frag in css, f"style.css 包含 {desc}")
 
 
-@suite.test("发布配置 — index_source.py 随 Release 发布")
+@suite.test("发布配置 — server.py 自包含、工具不再随 Release 发布")
 def _(t, flags):
     rel = open(os.path.join(ROOT, '.github', 'workflows', 'release.yml'), encoding='utf-8').read()
-    t.check('tools/source_link/index_source.py' in rel, "release.yml 上传 tools/source_link/index_source.py")
+    t.check('index_source.py' not in rel, "release.yml 不再上传已删除的工具")
+    t.check('weblogviewer.tar.gz' in rel, "release.yml 仍发布主包")
     pkg = open(os.path.join(ROOT, 'scripts', 'package.sh'), encoding='utf-8').read()
-    t.check("--exclude='tools'" in pkg, "package.sh 继续排除 tools/（工具不打进 tar.gz）")
+    t.check('server.py' in pkg, "package.sh 打包 server.py（单文件可部署）")
+    t.check("--exclude='tools'" in pkg, "package.sh 排除 tools/")

@@ -34,11 +34,14 @@ app.js
   └── Utils (utils.js)                 — 现有 extractMethodName
 ```
 
-CLI 工具（发布附件，不打进 tar.gz）：
+索引逻辑内置于 `server.py`（单文件即可部署，无外部工具依赖）：
 
 ```
-tools/source_link/index_source.py  — 扫描项目 → 过滤 → 生成源码包（zip + index）
+server.py  — collect_files / build_index：扫描项目 → 过滤 → 生成 source-index.json
+             （同时通过 --project 提供 /source/* 只读接口；--no-static 可仅保留后端接口）
 ```
+
+> 变更（v3-2）：原独立 CLI 工具 `tools/source_link/index_source.py` 已并入 `server.py`，降低服务端部署成本（单文件运行）；该工具不再随 Release 发布。
 
 ### 模块加载顺序（在 app.js 之前）
 
@@ -53,7 +56,7 @@ tools/source_link/index_source.py  — 扫描项目 → 过滤 → 生成源码�
 
 ## 3. 数据格式：源码索引（source-index.json）
 
-`index_source.py` 生成的源码包内包含 `source-index.json`（包内文件清单）与源码文件本体。
+`server.py` 的 `build_index()` 生成索引（源码包内的 `source-index.json` 与之同构），包含文件清单与源码文件本体（zip 导入时）。
 
 ```json
 {
@@ -80,10 +83,10 @@ tools/source_link/index_source.py  — 扫描项目 → 过滤 → 生成源码�
 
 | 途径 | 方式 | 适用 | 阶段 |
 |---|---|---|---|
-| A. CLI 索引工具 | `index_source.py <项目路径> -o source.zip` | 大项目、可脚本化 | MVP（已确认） |
+| A.（已移除）CLI 索引工具 | 原 `index_source.py`，已并入 `server.py` | — | v3-2 合并 |
 | B. 压缩包上传 | 上传 zip/tar.gz，前端解压时按规则过滤 | 中小项目 | MVP（已确认） |
 | C. 目录拖拽 | `webkitdirectory` 递归读取，前端实时索引 | 中小项目、免 CLI | MVP（已确认） |
-| D. 远程服务 | `server.py --project <path>`（远程部署 + 端口转发） | 远程开发（VSCode Remote-SSH 等） | v3-1 |
+| D. 远程服务 | `server.py --project <path>`（远程部署 + 端口转发；`--no-static` 仅后端） | 远程开发（VSCode Remote-SSH 等） | v3-1 |
 | E. HTTP 索引 URL | 输入 `source-index.json` 的 URL，前端按相对路径拉取 | 任意 HTTP 静态托管（nginx 等） | v3-1 |
 
 统一入口：工具栏「📄 源码」→ 源码面板顶部导入区（按钮：选择源码包 / 选择目录）。
@@ -198,22 +201,23 @@ package-lock.json yarn.lock pnpm-lock.yaml Cargo.lock composer.lock Gemfile.lock
 
 ### MVP：CLI 工具 + 压缩包 + 目录拖拽导入 + 详情面板跳转
 
+> 注：MVP 阶段的独立 CLI 工具 `index_source.py` 已在 **v3-2 并入 `server.py` 并删除**（见下文 v3-2）。
+
 **改动清单**
 
 | 文件 | 改动 |
 |---|---|
-| `tools/source_link/index_source.py` | 新增：遍历/过滤/统计/生成 zip（含 source-index.json） |
+| `tools/source_link/index_source.py` | 新增：遍历/过滤/统计/生成 zip（含 source-index.json）〔v3-2 已并入 server.py 并删除〕 |
 | `js/source_link.js` | 新增：SourceLink（zip 解压复用 ArchiveHandler、目录拖拽、建索引、parseSource/resolve、内容懒加载） |
 | `js/source_viewer.js` | 新增：SourceViewer（面板渲染、行高亮、大文件截断、轻量高亮） |
 | `index.html` | 新增「📄 源码」按钮、源码包/目录导入 input、source-viewer-panel、详情面板查看代码按钮 |
 | `css/style.css` | 源码面板/代码区/高亮样式 |
 | `test/samples_gen/source_samples.sh` | 新增：生成样例项目树（含 node_modules/build/.git/配置文件/多语言） |
 | `test/generate_samples.sh` | source 引入该模块 |
-| `test/test_10_source_link.py` | 新增：CLI 生成断言、排除规则、解析/匹配单测、面板 DOM |
-| `.github/workflows/release.yml` | 附件增加 `tools/source_link/index_source.py` |
-| `test/test_9_update_tool.py` | CSTOOLS 列表增加 index_source.py |
+| `test/test_10_source_link.py` | 新增：CLI 生成断言、排除规则、解析/匹配单测、面板 DOM〔v3-2 改为断言 server.py 内置 build_index〕 |
+| `.github/workflows/release.yml` | 附件增加 `tools/source_link/index_source.py`〔v3-2 已移除〕 |
 
-**CLI 命令设计**
+**CLI 命令设计**（历史设计，v3-2 已移除）
 
 ```
 python3 tools/source_link/index_source.py <项目路径> [-o source-bundle.zip] [--exclude-dir x] [--exclude-file y] [--config path]
@@ -324,7 +328,21 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 | `server.py` | `--project <path>` 参数 + `/source/*` 静态路由（索引 + 源码文件） |
 | `js/source_link.js` | 服务端数据源拉取（`fetch`）；数据源抽象为 `zip / dir / server / http` 四种模式 |
 | `js/source_viewer.js` | 排除规则 UI 管理（面板内增删并重新过滤） |
-| `tools/source_link/index_source.py` | 增量索引/缓存 |
+| `server.py` | 索引逻辑内联（原 `index_source.py` 并入），并新增 `--no-static`（仅后端接口） |
+
+### v3-2：索引逻辑并入 server.py（降低部署成本）
+
+**目标**：服务端可**单文件部署**（不再依赖 `tools/source_link/index_source.py`），同时允许只跑后端接口。
+
+**改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `server.py` | 内联 `DEFAULT_EXCLUDE_DIRS/FILES`、`SOURCE_EXTS`、`LANG_MAP`、`collect_files`、`read_source`、`build_index`；删除 `_load_index_source()`；新增 `--no-static`（不托管静态文件，仅 `/source/*`） |
+| `tools/source_link/index_source.py` | 删除（索引能力并入 server.py；离线 zip 由 server 的 `/source/index.json` 或前端目录/压缩包导入替代） |
+| `.github/workflows/release.yml` | 移除该工具附件 |
+| `test/test_10_source_link.py` | 改为以模块方式加载 `server.py` 断言内置 `build_index` 输出 |
+| `test/test_16_source_link_v3.py` | 移除 CLI 缓存用例，新增 `--no-static` 冒烟 |
 
 ### v3-1：远程服务器代码适配（VSCode Remote-SSH 等场景）
 
@@ -369,14 +387,14 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 
 ## 11. 测试策略
 
-`test/test_10_source_link.py`（新增）：
+`test/test_10_source_link.py`：
 
-1. **CLI 生成**：跑 `index_source.py` 于样例项目 → 断言 zip 存在、index.json 字段、文件数
-2. **排除规则**：样例树含 `node_modules/`、`build/`、`.git/`、`.o`、`package-lock.json` → 断言均被排除；白名单文件保留
+1. **内置索引**：以模块方式加载 `server.py` → 调用 `build_index(样例项目)` → 断言 index 字段、文件数、行数
+2. **排除规则**：样例树含 `node_modules/`、`build/`、`.git/`、`config/app.ini`、`README.md` → 断言均被排除；白名单文件保留
 3. **解析单测**：4 种 source 格式 → `parseSource` 断言（含无行号、空串）
 4. **匹配单测**：精确 / basename 同名 / Java 包名映射 / 失败兜底
 5. **前端 DOM**：js_loader 加载 source_link.js + source_viewer.js → 面板结构、行高亮类、按钮存在
-6. **发布**：test_9 断言 release.yml 含 `tools/source_link/index_source.py`、package.sh 仍排除 tools
+6. **发布**：断言 release.yml 不再引用已删除的工具、package.sh 打包 server.py 并排除 tools
 
 样例项目（`test/samples/source_link/mini_cpp_demo/`）由 `source_samples.sh` 生成：
 
@@ -394,6 +412,5 @@ README.md                         # 应排除（非源码扩展名）
 
 ## 12. 打包与发布
 
-- `scripts/package.sh`：已含 `--exclude='tools'`，**无需修改**（工具不打包进 tar.gz，随 GitHub Release 发布）
-- `.github/workflows/release.yml`：`files` 增加 `tools/source_link/index_source.py`
-- `test_9_update_tool.py`：CSTOOLS 增加 `index_source.py`
+- `scripts/package.sh`：已含 `--exclude='tools'`，**无需修改**（tools 下的 callstack/update 工具不打包进 tar.gz，随 GitHub Release 发布）
+- `.github/workflows/release.yml`：`files` 曾包含 `tools/source_link/index_source.py`，**v3-2 已移除**（索引逻辑并入 `server.py`，随主包发布）

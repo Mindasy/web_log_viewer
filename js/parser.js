@@ -108,7 +108,7 @@ const LogParser = {
     this.sourceFiles = [{ name: file.name, size: file.size }];
 
     const text = await this.readFile(file, cfg.encoding);
-    const lines = text.split(/\r?\n/);
+    const lines = this._splitLines(text);
 
     // 自动检测格式
     let preset = cfg.preset;
@@ -201,43 +201,39 @@ const LogParser = {
       size: f.size
     }));
 
-    const allLines = [];
-    const fileLineMap = [];
     const encoding = cfg.encoding && cfg.encoding !== 'UTF-8' ? cfg.encoding : 'UTF-8';
     const decoder = new TextDecoder(encoding);
 
+    // 逐文件流式解析：不再累积 allLines / fileLineMap 两个大数组，
+    // 每读一个文件即解析入列并立即释放其内容，降低内存与一遍额外遍历（多文件更快）。
+    let parser = null;
     for (const tf of textFiles) {
+      let lines;
       try {
-        const content = decoder.decode(tf.data);
-        const lines = content.split(/\r?\n/);
-        for (const line of lines) {
-          allLines.push(line);
-          fileLineMap.push(file.name + '/' + tf.name);
-        }
+        lines = this._splitLines(decoder.decode(tf.data));
       } catch (e) {
         console.warn(`无法读取压缩包中的文件: ${tf.name}`, e);
+        continue;
+      }
+      if (!parser) {
+        const preset = cfg.preset === 'auto' ? this.autoDetect(lines) : cfg.preset;
+        parser = this.getParser(preset, cfg);
+      }
+      const srcName = file.name + '/' + tf.name;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.trim()) continue;
+        const entry = parser(line, i);
+        if (entry) {
+          entry.index = this.entries.length;
+          entry.lineNumber = i;
+          entry.sourceFile = srcName;
+          this.entries.push(entry);
+        }
       }
     }
 
     if (showProgress) Utils.hideLoading();
-
-    let preset = cfg.preset;
-    if (preset === 'auto') {
-      preset = this.autoDetect(allLines);
-    }
-
-    const parser = this.getParser(preset, cfg);
-    for (let i = 0; i < allLines.length; i++) {
-      const line = allLines[i];
-      if (!line.trim()) continue;
-      const entry = parser(line, i);
-      if (entry) {
-        entry.index = this.entries.length;
-        entry.lineNumber = i;
-        entry.sourceFile = fileLineMap[i] || file.name;
-        this.entries.push(entry);
-      }
-    }
 
     return this.entries;
   },
@@ -279,6 +275,27 @@ const LogParser = {
 
   // 自动检测结果缓存
   _detectedPreset: null,
+
+  // 上一批导入中被跳过的文件（空文件 / 空压缩包 / 解压或解析失败）
+  _lastSkipped: [],
+
+  // 取出并清空上一批被跳过的文件（供上层统一提示）
+  consumeSkipped() {
+    const s = this._lastSkipped || [];
+    this._lastSkipped = [];
+    return s;
+  },
+
+  // 快速按行切分（同时兼容 \n 与 \r\n）
+  // 用 split('\n') 替代正则 split，仅在行尾含 \r 时裁剪，显著快于 /(\r?\n)/
+  _splitLines(text) {
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.length && l.charCodeAt(l.length - 1) === 13) lines[i] = l.slice(0, -1);
+    }
+    return lines;
+  },
 
   // 自动检测格式
   autoDetect(lines) {
@@ -612,6 +629,9 @@ const LogParser = {
   async mergeFiles(files, config = {}, append = false) {
     const cfg = { ...this.config, ...config };
     this.config = cfg;
+    // 每批重新检测格式（避免沿用上一批文件的检测结果）
+    this._detectedPreset = null;
+    this._lastSkipped = [];
 
     // 追加模式：先保存已有数据
     const savedEntries = append ? [...this.entries] : [];
@@ -620,9 +640,10 @@ const LogParser = {
     this.entries = [];
     this.sourceFiles = [];
 
-    const allEntries = [];
+    let allEntries = [];
     const allSourceFiles = [];
-    const failedFiles = [];
+    // 空文件 / 空压缩包 / 解压或解析失败 → 统一跳过（不中断整批导入）
+    const skippedFiles = [];
 
     for (const file of files) {
       try {
@@ -632,26 +653,34 @@ const LogParser = {
           const savedSrcInner = this.sourceFiles;
           const savedInfo = this.fileInfo;
 
-          this.entries = [];
-          this.sourceFiles = [];
-
+          let innerEntries = [];
+          let innerSources = [];
           try {
+            this.entries = [];
+            this.sourceFiles = [];
             await this.parseArchiveFile(file, cfg, false);
-
-            this.entries.forEach(e => {
-              if (!e.sourceFile) e.sourceFile = file.name;
-            });
-            for (let ei = 0; ei < this.entries.length; ei++) allEntries.push(this.entries[ei]);
-            for (let si = 0; si < this.sourceFiles.length; si++) allSourceFiles.push(this.sourceFiles[si]);
+            innerEntries = this.entries;
+            innerSources = this.sourceFiles;
           } finally {
             this.entries = savedEntriesInner;
             this.sourceFiles = savedSrcInner;
             this.fileInfo = savedInfo;
           }
+
+          if (innerEntries.length === 0) {
+            // 解压成功但内容为空（或全为非文本文件）→ 跳过
+            skippedFiles.push(file.name);
+          } else {
+            innerEntries.forEach(e => {
+              if (!e.sourceFile) e.sourceFile = file.name;
+            });
+            for (let ei = 0; ei < innerEntries.length; ei++) allEntries.push(innerEntries[ei]);
+            for (let si = 0; si < innerSources.length; si++) allSourceFiles.push(innerSources[si]);
+          }
         } else {
           // 普通文件：直接读取并解析
           const text = await this.readFile(file, cfg.encoding);
-          const lines = text.split(/\r?\n/);
+          const lines = this._splitLines(text);
 
           let preset = cfg.preset;
           if (preset === 'auto') {
@@ -659,6 +688,7 @@ const LogParser = {
           }
 
           const parser = this.getParser(preset, cfg);
+          let added = 0;
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             if (!line.trim()) continue;
@@ -668,37 +698,36 @@ const LogParser = {
               entry.lineNumber = i;
               entry.sourceFile = file.name;
               allEntries.push(entry);
+              added++;
             }
           }
-          allSourceFiles.push({ name: file.name, size: file.size });
+          if (added === 0) {
+            // 文本文件为空（或无有效行）→ 跳过
+            skippedFiles.push(file.name);
+          } else {
+            allSourceFiles.push({ name: file.name, size: file.size });
+          }
         }
       } catch (e) {
-        failedFiles.push(file.name);
+        skippedFiles.push(file.name);
         console.error(`解析文件失败: ${file.name}`, e);
       }
     }
 
-    if (failedFiles.length > 0) {
-      const msg = failedFiles.length === files.length
-        ? `全部 ${failedFiles.length} 个文件解析失败`
-        : `${failedFiles.length}/${files.length} 个文件解析失败: ${failedFiles.join(', ')}`;
-      Utils.showToast(msg, 'error');
+    if (allEntries.length === 0 && savedEntries.length === 0) {
+      const n = skippedFiles.length;
+      throw new Error(n
+        ? `全部 ${n} 个文件为空或解析失败，没有可解析的日志内容`
+        : '没有可解析的日志内容');
     }
 
-    if (allEntries.length === 0 && savedEntries.length === 0) {
-      throw new Error('没有可解析的日志内容');
-    }
+    // 部分失败/跳过不在此提示，记录后由上层（App.onDataLoaded）统一展示
+    this._lastSkipped = skippedFiles;
 
     if (append && savedEntries.length > 0) {
-      const tempEntries = [];
-      for (let i = 0; i < savedEntries.length; i++) tempEntries.push(savedEntries[i]);
-      for (let i = 0; i < allEntries.length; i++) tempEntries.push(allEntries[i]);
-      allEntries.length = 0;
-      for (let i = 0; i < tempEntries.length; i++) allEntries.push(tempEntries[i]);
-
+      allEntries = savedEntries.concat(allEntries);
       for (const sf of savedSrc) {
-        const exists = allSourceFiles.find(f => f.name === sf.name);
-        if (!exists) allSourceFiles.push(sf);
+        if (!allSourceFiles.some(f => f.name === sf.name)) allSourceFiles.push(sf);
       }
     }
 

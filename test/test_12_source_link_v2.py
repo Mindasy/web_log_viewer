@@ -31,6 +31,7 @@ def _(t, flags):
     t.check("closest('.sv-link-source')" in grid, "grid.js 行点击委托识别链接")
     t.check('openSource(entry.source)' in grid, "点击链接调用 SourceLink.openSource")
     t.check('.sv-link-source' in css, "css 含 .sv-link-source 链接样式")
+    t.check('SourceLink.isLoaded()' in grid, "grid.js 仅在已导入源码时渲染链接")
 
 
 @suite.test("调用栈流程图详情项「查看代码」")
@@ -41,6 +42,21 @@ def _(t, flags):
     t.check('SourceLink.openSource(e.source)' in cs, "点击 .d-src 调用 openSource")
     t.check("e.stopPropagation()" in cs, ".d-src 点击阻止冒泡（不触发定位日志）")
     t.check('.cs-detail-item .d-src' in css, "css 含 .d-src 样式")
+    t.check('SourceLink.isLoaded()' in cs, "callstack.js 仅在已导入源码时渲染 📄")
+
+
+@suite.test("未导入源码时不显示跳转入口（UI 与实现一致）")
+def _(t, flags):
+    app = open(os.path.join(ROOT, 'js', 'app.js'), encoding='utf-8').read()
+    sl = open(os.path.join(ROOT, 'js', 'source_link.js'), encoding='utf-8').read()
+    t.check('isLoaded()' in sl and 'return this.files.length > 0' in sl,
+            "SourceLink.isLoaded 判定是否已导入源码")
+    t.check('this._canViewSource()' in app, "详情按钮按导入状态显隐")
+    t.check('_canViewSource()' in app and 'SourceLink.isLoaded' in app,
+            "_canViewSource 依赖 isLoaded")
+    t.check('refreshSourceLinks' in app and 'refreshSourceLinks' in sl,
+            "导入/清除/规则变更后刷新跳转入口显隐")
+    t.check('LogGrid.render()' in app, "刷新网格以更新链接显隐")
 
 
 @suite.test("文件树懒加载 + 过滤框")
@@ -127,7 +143,7 @@ def _(t, flags):
     css = open(os.path.join(ROOT, 'css', 'style.css'), encoding='utf-8').read()
     t.check('sv-hit' in sv and '<mark class="sv-hit">' in sv, "树过滤命中片段高亮渲染")
     t.check('.sv-hit' in css, "css 含 .sv-hit 命中高亮样式")
-    t.check('20000' in sl and '建议改用 CLI' in sl, "超大目录提示改用 CLI（不阻断）")
+    t.check('20000' in sl and '建议改用「服务端」模式' in sl, "超大目录建议改用服务端模式（不阻断）")
     t.check('_renderDirNode' in sv, "树渲染合并为单一递归实现")
     t.check('_renderDirsRecur' not in sv and '_renderDirsInto' not in sv,
             "已移除重复的树渲染实现")
