@@ -1037,12 +1037,37 @@
       <p>点击「📂 打开」或拖放日志文件到窗口即可开始分析。支持 <code>.log</code>、<code>.txt</code>、<code>.zip</code>、<code>.tar.gz</code>、<code>.tgz</code> 等格式。</p>
     </div>
     <div class="help-section">
+      <h3>文件与数据源</h3>
+      <ul>
+        <li><strong>合并</strong> — 「🔗 合并」把多个文件解析到同一视图（可混合压缩包与普通文件）</li>
+        <li><strong>重新加载</strong> — 调整解析规则后「🔄 重新加载」按当前配置重新解析</li>
+        <li><strong>导出 / 清除</strong> — 「💾 导出」保存过滤后的结果，「🗑️ 清除」清空全部日志</li>
+        <li><strong>文件列表 / 列设置</strong> — 「📁 文件」按来源过滤，「📊 列」控制显示哪些列及其顺序</li>
+      </ul>
+    </div>
+    <div class="help-section">
       <h3>搜索与过滤</h3>
       <ul>
         <li><strong>搜索</strong> — 输入关键词实时过滤，支持正则模式、大小写敏感、全词匹配</li>
         <li><strong>级别过滤</strong> — 点击 FATAL / ERROR / WARN / INFO / DEBUG / TRACE 标签切换</li>
         <li><strong>高级过滤</strong> — 按线程、来源、消息内容、时间范围精确过滤</li>
         <li><strong>搜索结果导航</strong> — <kbd>F3</kbd> / <kbd>Shift+F3</kbd> 跳转上/下一个匹配</li>
+      </ul>
+    </div>
+    <div class="help-section">
+      <h3>视图 · 书签 · 源码</h3>
+      <ul>
+        <li><strong>视图</strong> — <kbd>Ctrl+Shift+S</kbd> 保存当前过滤为视图，面包屑可前进/后退与多层回溯</li>
+        <li><strong>书签</strong> — <kbd>Ctrl+B</kbd> 或双击行添加/删除；「📋 书签列表」统一管理、导出</li>
+        <li><strong>日志 ↔ 源码</strong> — 导入源码（本地包 / 目录、服务端、HTTP 索引）后，点击「来源」字段跳转到对应代码行；未导入源码时不显示跳转入口</li>
+      </ul>
+    </div>
+    <div class="help-section">
+      <h3>时间线与调用栈</h3>
+      <ul>
+        <li>滚轮缩放 · 拖动平移 · <kbd>Shift</kbd>+滚轮 平移 · <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+滚轮 缩放</li>
+        <li>点击线程/条目过滤并定位；双击（或 <kbd>Alt</kbd>+点击）线程查看方法时间线</li>
+        <li>「调用栈」tab 加载调用栈文件（缩进树或 <code>A &lt;- B &lt;- C</code> 箭头链）；面板内「❓」查看完整操作说明</li>
       </ul>
     </div>
     <div class="help-section">
@@ -1056,10 +1081,14 @@
         <tr><td><kbd>Ctrl+Shift+S</kbd></td><td>保存当前视图</td></tr>
         <tr><td><kbd>F3</kbd></td><td>下一个搜索结果</td></tr>
         <tr><td><kbd>Shift+F3</kbd></td><td>上一个搜索结果</td></tr>
+        <tr><td><kbd>Enter</kbd>（搜索框）</td><td>下一个匹配</td></tr>
+        <tr><td><kbd>Shift+Enter</kbd>（搜索框）</td><td>上一个匹配</td></tr>
+        <tr><td><kbd>Alt+T</kbd></td><td>同线程定位（独占该线程日志）</td></tr>
+        <tr><td><kbd>Alt+Shift+T</kbd></td><td>同线程叠加（保留现有过滤条件）</td></tr>
         <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>上/下一行</td></tr>
         <tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>上/下一页</td></tr>
         <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>首行 / 末行</td></tr>
-        <tr><td><kbd>Escape</kbd></td><td>关闭当前面板</td></tr>
+        <tr><td><kbd>Escape</kbd></td><td>关闭当前面板 / 清空搜索</td></tr>
       </table>
     </div>
     <div class="help-section">
