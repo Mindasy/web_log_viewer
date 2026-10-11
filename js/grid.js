@@ -667,8 +667,8 @@ const LogGrid = {
     if (this.isColumnVisible('source')) {
       const src = entry.source || '';
       let cell = this._hlText(src || '-', 'source', entry.index, hlCache);
-      // v2：source 可解析为代码位置时渲染为可点击链接（不依赖是否已导入源码）
-      if (src && typeof SourceLink !== 'undefined' && SourceLink.parseSource(src).file) {
+      // v2：source 可解析为代码位置、且已导入源码时，渲染为可点击链接（未导入则不显示链接样式）
+      if (src && typeof SourceLink !== 'undefined' && SourceLink.isLoaded() && SourceLink.parseSource(src).file) {
         cell = `<span class="sv-link-source" title="查看对应源代码行">${cell}</span>`;
       }
       html += `<div class="col col-source"${w('source')} title="${this.escapeHtml(src || '-')}">${cell || '-'}</div>`;

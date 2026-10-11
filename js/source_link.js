@@ -1,15 +1,46 @@
 // source_link.js - 日志与代码行关联：源码索引 / source 解析 / 匹配跳转
-// 导入途径：源码压缩包（CLI 生成的 source-bundle.zip 或用户自行打包）· 项目目录（webkitdirectory）
+// 数据源抽象（4 种模式）：
+//   zip    源码压缩包（CLI 生成的 source-bundle.zip 或用户自行打包）
+//   dir    项目目录（webkitdirectory）
+//   server 同源服务端（server.py --project 提供 /source/index.json + /source/files/<path>）
+//   http   任意 HTTP 索引 URL（托管 source-index.json + 源码文件）
 
 const SourceLink = {
-  index: null,        // source-index.json（CLI 生成时存在）
-  files: [],          // [{path, basename, size, lines, lang, data|file, _text}]
+  files: [],          // [{path, basename, size, lines, lang, data|file|url, _text}]
   _byBasename: null,  // Map basename -> [entry]
   _byPath: null,      // Map path -> entry
-  mode: '',           // 'zip' | 'dir'
+  mode: '',           // 数据源：'zip' | 'dir' | 'server' | 'http'
   bundleName: '',
 
-  // 默认排除目录（与 tools/source_link/index_source.py 保持一致，路径片段匹配）
+  // 解码文本缓存上限：超过后淘汰最久未用者，避免长时间浏览源码内存持续增长
+  TEXT_CACHE_MAX: 6,
+  _textLRU: [],       // 最近使用的文件条目（队首最新）
+
+  // 用户自定义排除规则（面板内增删，跨导入保留）
+  _userExcludeDirs: [],
+  _userExcludeFiles: [],
+  // 导入时的原始条目（供排除规则变更后重新过滤）
+  _rawEntries: null,
+  // 服务端探测状态：''（未探测）| 'ready' | 'disabled' | 'offline'
+  _serverState: '',
+  // 已配置的服务端地址（'' = 同源；静态 file:// 打开时需填具体地址）
+  _serverBase: '',
+
+  // 数据源模式的展示标签（徽标 / 切换提示共用）
+  MODE_LABELS: {
+    zip: '📦 本地包',
+    dir: '📁 本地目录',
+    server: '🖥 服务端',
+    http: '🔗 HTTP 索引',
+  },
+  MODE_TITLES: {
+    zip: '本地源码包（zip/tar.gz）',
+    dir: '本地项目目录',
+    server: '服务端源码（server.py --project）',
+    http: 'HTTP 索引 URL',
+  },
+
+  // 默认排除目录（与 server.py 及前端规则保持一致，路径片段匹配）
   EXCLUDE_DIRS: [
     '.git', '.svn', '.hg', '.idea', '.vscode', 'node_modules', 'bower_components',
     'vendor', '.venv', 'venv', 'site-packages', '__pycache__', '.gradle', '.m2',
@@ -74,6 +105,25 @@ const SourceLink = {
     if (relatedCb) {
       relatedCb.addEventListener('change', () => this.setOnlyRelated(relatedCb.checked));
     }
+    // 远程数据源：服务端（同源 /source/*）与任意 HTTP 索引 URL
+    const remoteUrlEl = document.getElementById('sv-remote-url');
+    const btnServer = document.getElementById('btn-source-import-server');
+    if (btnServer) btnServer.addEventListener('click', () => {
+      this.importFromServer(remoteUrlEl ? remoteUrlEl.value.trim() : '');
+    });
+    const btnHttp = document.getElementById('btn-source-import-http');
+    if (btnHttp) btnHttp.addEventListener('click', () => {
+      this.importFromHttp(remoteUrlEl ? remoteUrlEl.value.trim() : '');
+    });
+    // 恢复上次配置的服务端地址并探测（静态打开时靠它识别服务端）
+    try {
+      const saved = localStorage.getItem('sv-server-base');
+      if (saved) {
+        this._serverBase = saved;
+        if (remoteUrlEl) remoteUrlEl.value = saved;
+      }
+    } catch (e) { /* localStorage 不可用 */ }
+    this.detectServer();
   },
 
   // ===== 过滤规则（目录拖拽 / 无索引压缩包时使用） =====
@@ -86,10 +136,10 @@ const SourceLink = {
 
   _shouldSkip(relPath) {
     const parts = relPath.split('/');
-    if (parts.some(p => this.EXCLUDE_DIRS.includes(p))) return true;
+    if (parts.some(p => this.EXCLUDE_DIRS.includes(p) || this._userExcludeDirs.includes(p))) return true;
     const name = parts[parts.length - 1] || '';
     const lower = name.toLowerCase();
-    for (const pat of this.EXCLUDE_FILES) {
+    for (const pat of this.EXCLUDE_FILES.concat(this._userExcludeFiles)) {
       if (this._fnmatch(lower, pat.toLowerCase())) return true;
     }
     const dot = name.lastIndexOf('.');
@@ -103,6 +153,20 @@ const SourceLink = {
     return this.LANG_MAP[ext] || 'text';
   },
 
+  // 数据源切换提示（同模式重导入 / 首次导入时为空串）
+  _switchNote(prevMode) {
+    const cur = this.mode;
+    if (!prevMode || prevMode === cur) return '';
+    const a = this.MODE_LABELS[prevMode] || prevMode;
+    const b = this.MODE_LABELS[cur] || cur;
+    return `（数据源已切换：${a} → ${b}）`;
+  },
+
+  // 是否已导入源码：用于跳转入口显隐（未导入时不显示链接，避免"能点却不能跳"）
+  isLoaded() {
+    return this.files.length > 0;
+  },
+
   // ===== 导入 =====
 
   // 目录索引分片大小（每片交给事件循环让出，避免阻塞 UI）
@@ -112,6 +176,7 @@ const SourceLink = {
     opts = opts || {};
     const onlyRelated = opts.onlyRelated !== undefined ? !!opts.onlyRelated : !!this._onlyRelated;
     const refSet = onlyRelated ? this._getLogRefSet() : null;
+    const prevMode = this.mode;
     Utils.showLoading('正在解压源码包...');
     try {
       const allFiles = await ArchiveHandler.extract(file);
@@ -138,7 +203,7 @@ const SourceLink = {
         return this.importArchive(file, { onlyRelated: false });
       }
       this._buildIndex(entries, index, 'zip', file.name, { refMode: onlyRelated });
-      Utils.showToast(`已导入源码包 ${file.name}（${this.files.length} 个文件${onlyRelated ? '，日志相关' : ''}）`, 'success', 2500);
+      Utils.showToast(`已导入源码包 ${file.name}（${this.files.length} 个文件${onlyRelated ? '，日志相关' : ''}）${this._switchNote(prevMode)}`, 'success', 2500);
     } catch (e) {
       Utils.showToast('源码包导入失败: ' + e.message, 'error');
     }
@@ -152,10 +217,11 @@ const SourceLink = {
     const rootName = (arr[0].webkitRelativePath || arr[0].name || '项目').split('/')[0];
     const onlyRelated = opts.onlyRelated !== undefined ? !!opts.onlyRelated : !!this._onlyRelated;
     const refSet = onlyRelated ? this._getLogRefSet() : null;
+    const prevMode = this.mode;
     Utils.showLoading('正在索引项目目录 0/' + arr.length + '...');
-    // 超大目录：提示改用 CLI 生成源码包（不阻断，仅建议）
+    // 超大目录：提示改用服务端模式（不阻断，仅建议）
     if (arr.length > 20000) {
-      Utils.showToast(`目录含 ${Utils.formatNumber(arr.length)} 个文件，建议改用 CLI 生成源码包（tools/source_link/index_source.py）以提速`, 'warn', 4000);
+      Utils.showToast(`目录含 ${Utils.formatNumber(arr.length)} 个文件，建议改用「服务端」模式（server.py --project）以提速`, 'warn', 4000);
     }
     try {
       const seen = new Set();
@@ -182,11 +248,182 @@ const SourceLink = {
         return this.importDirectory(fileList, { onlyRelated: false });
       }
       this._buildIndex(candidates, null, 'dir', rootName, { refMode: onlyRelated });
-      Utils.showToast(`已导入项目目录 ${rootName}（${this.files.length} 个源码文件${onlyRelated ? '，日志相关' : ''}）`, 'success', 2500);
+      Utils.showToast(`已导入项目目录 ${rootName}（${this.files.length} 个源码文件${onlyRelated ? '，日志相关' : ''}）${this._switchNote(prevMode)}`, 'success', 2500);
     } catch (e) {
       Utils.showToast('项目目录导入失败: ' + e.message, 'error');
     }
     Utils.hideLoading();
+  },
+
+  // ===== 远程数据源：server（同源 /source/*）与 http（任意索引 URL） =====
+
+  // 从服务端加载源码；baseUrl 为空表示当前站点同源（静态 file:// 打开时需填写具体地址）。
+  // 先通过 /source/ping 识别是否为 Web Log Viewer 服务端（特殊标志），再拉取索引。
+  async importFromServer(baseUrl, opts) {
+    const base = (baseUrl || this._serverBase || '').replace(/\/+$/, '');
+    const state = await this.detectServer(base, true);
+    if (state === 'disabled') {
+      Utils.showToast('该地址是 Web Log Viewer 服务端，但未启用源码服务（请用 --project 启动）', 'warn', 4000);
+      return;
+    }
+    if (state !== 'ready') {
+      Utils.showToast('未识别到服务端（/source/ping 无响应或非本应用）', 'error', 3500);
+      return;
+    }
+    this._persistServerBase(base);
+    const fileUrl = (rel) => base + '/source/files/' + rel.split('/').map(encodeURIComponent).join('/');
+    return this._importFromIndexUrl(base + '/source/index.json', fileUrl, 'server', opts);
+  },
+
+  _persistServerBase(base) {
+    try { localStorage.setItem('sv-server-base', base || ''); } catch (e) { /* ignore */ }
+  },
+
+  // 从任意 HTTP 索引 URL 加载；源码文件按索引所在目录的相对路径拉取
+  async importFromHttp(indexUrl, opts) {
+    const url = (indexUrl || '').trim();
+    if (!url) {
+      Utils.showToast('请填写索引 URL（source-index.json）', 'error');
+      return;
+    }
+    const dir = url.replace(/[^/]*$/, '');
+    const fileUrl = (rel) => dir + rel.split('/').map(encodeURIComponent).join('/');
+    return this._importFromIndexUrl(url, fileUrl, 'http', opts);
+  },
+
+  async _importFromIndexUrl(indexUrl, fileUrl, mode, opts) {
+    opts = opts || {};
+    const onlyRelated = opts.onlyRelated !== undefined ? !!opts.onlyRelated : !!this._onlyRelated;
+    const refSet = onlyRelated ? this._getLogRefSet() : null;
+    const prevMode = this.mode;
+    Utils.showLoading('正在拉取源码索引...');
+    try {
+      const resp = await fetch(indexUrl, { cache: 'no-store' });
+      if (!resp.ok) {
+        // 服务端可能返回 JSON 说明（如「请用 --project 启动」），透出给用户
+        let detail = `HTTP ${resp.status}`;
+        try {
+          const body = await resp.json();
+          if (body && body.error) detail = `${body.error}（HTTP ${resp.status}）`;
+        } catch (e) { /* 非 JSON 响应，保留状态码 */ }
+        throw new Error(detail);
+      }
+      const index = await resp.json();
+      if (!index || !Array.isArray(index.files)) throw new Error('索引格式不正确（缺少 files）');
+      const entries = [];
+      for (const f of index.files) {
+        if (!f || !f.path) continue;
+        if (this._shouldSkip(f.path)) continue;
+        if (refSet && !this._matchesLogRef(f.path, refSet)) continue;
+        entries.push({ path: f.path, size: f.size || 0, url: fileUrl(f.path) });
+      }
+      if (onlyRelated && !entries.length && index.files.length) {
+        Utils.showToast('未匹配到日志引用的文件，回退为全量索引', 'warn', 3000);
+        this.setOnlyRelated(false);
+        return this._importFromIndexUrl(indexUrl, fileUrl, mode, { onlyRelated: false });
+      }
+      const name = index.project || (mode === 'server' ? '服务端源码' : indexUrl);
+      this._buildIndex(entries, index, mode, name, { refMode: onlyRelated });
+      if (mode === 'server') {
+        this._serverState = 'ready';
+        this.updateServerState();
+      }
+      const label = mode === 'server' ? '服务端' : 'HTTP 索引';
+      Utils.showToast(`已从${label}加载 ${this.files.length} 个源码文件${onlyRelated ? '（日志相关）' : ''}${this._switchNote(prevMode)}`, 'success', 2500);
+    } catch (e) {
+      Utils.showToast(`${mode === 'server' ? '服务端' : 'HTTP'} 源码加载失败: ${e.message}`, 'error', 3500);
+    }
+    Utils.hideLoading();
+  },
+
+  // ===== 服务端识别（特殊标志 /source/ping，供「🖥 服务端」按钮与状态提示） =====
+
+  // baseUrl 省略时用已配置地址（'' = 同源）；force=true 强制重探
+  async detectServer(baseUrl, force) {
+    const base = (baseUrl !== undefined && baseUrl !== null)
+      ? String(baseUrl).trim().replace(/\/+$/, '')
+      : (this._serverBase || '');
+    if (!force && this._serverState && base === this._serverBase) {
+      this.updateServerState();
+      return this._serverState;
+    }
+    this._serverBase = base;
+    let state = 'offline';
+    try {
+      const resp = await fetch(base + '/source/ping', { cache: 'no-store' });
+      if (resp.ok) {
+        const info = await resp.json();
+        // 必须命中特殊标志，避免把任意 HTTP 服务误判为本服务端
+        if (info && info.marker === 'wlv-source') {
+          state = info.source ? 'ready' : 'disabled';
+        }
+      }
+    } catch (e) {
+      state = 'offline';
+    }
+    this._serverState = state;
+    this.updateServerState();
+    return state;
+  },
+
+  updateServerState() {
+    const el = document.getElementById('sv-server-state');
+    const btn = document.getElementById('btn-source-import-server');
+    const where = this._serverBase || '同源';
+    const map = {
+      ready: { text: `服务端可用（${where}）`, title: `已识别服务端（${where}），可加载源码` },
+      disabled: { text: `服务端未启用源码（${where}）`, title: `已识别服务端（${where}），但未带 --project 启动` },
+      offline: {
+        text: this._serverBase ? `未识别到 server：${this._serverBase}` : '未配置 server',
+        title: '静态打开时请在输入框填写服务端地址（如 http://localhost:8765）',
+      },
+    };
+    const m = map[this._serverState];
+    if (el) el.textContent = m ? `（${m.text}）` : '';
+    if (btn) btn.title = m ? m.title : '从服务端加载源码（需先用 server.py --project 启动）';
+  },
+
+  // ===== 排除规则管理（面板内增删 → 重新过滤） =====
+
+  // 规则含 * 或 ? 视为文件 glob，否则视为目录名
+  addExcludeRule(rule) {
+    const r = (rule || '').trim();
+    if (!r) return false;
+    if (/[*?]/.test(r)) {
+      if (!this._userExcludeFiles.includes(r)) this._userExcludeFiles.push(r);
+    } else {
+      const d = r.replace(/\/+$/, '');
+      if (!d) return false;
+      if (!this._userExcludeDirs.includes(d)) this._userExcludeDirs.push(d);
+    }
+    this.reapplyExclusions();
+    return true;
+  },
+
+  removeExcludeRule(type, value) {
+    const list = type === 'file' ? this._userExcludeFiles : this._userExcludeDirs;
+    const i = list.indexOf(value);
+    if (i >= 0) {
+      list.splice(i, 1);
+      this.reapplyExclusions();
+    }
+  },
+
+  clearExcludeRules() {
+    if (!this._userExcludeDirs.length && !this._userExcludeFiles.length) return;
+    this._userExcludeDirs = [];
+    this._userExcludeFiles = [];
+    this.reapplyExclusions();
+  },
+
+  // 用更新后的规则重新过滤当前数据源（保留原始条目）
+  reapplyExclusions() {
+    if (!this._rawEntries) {
+      if (SourceViewer) SourceViewer.renderExcludeBar();
+      return;
+    }
+    // 元信息已固化在 _rawEntries 上，无需再传 index
+    this._buildIndex(this._rawEntries, null, this.mode, this.bundleName, { refMode: this._refMode });
   },
 
   // 让出主线程（分片间调度）
@@ -251,45 +488,41 @@ const SourceLink = {
     this.mode = mode;
     this.bundleName = bundleName || '';
     this._refMode = !!(meta && meta.refMode);
+    // 保留原始条目：排除规则变更后可重新过滤（来源内容仅此一份引用，不额外持有）
+    this._rawEntries = entries;
+    this._textLRU = [];
+
+    // CLI 索引的元信息（行数/语言/大小）直接固化到原始条目上，
+    // 避免长期保留整份 index（与 files 等量、且路径字符串重复的元数据副本）
+    if (index && Array.isArray(index.files)) {
+      const byPath = new Map();
+      for (const it of index.files) byPath.set(it.path, it);
+      for (const en of entries) {
+        const m = byPath.get(en.path);
+        if (!m) continue;
+        if (m.lines) en.lines = m.lines;
+        if (m.lang) en.lang = m.lang;
+        if (m.size) en.size = m.size;
+      }
+    }
+
     this.files = [];
     this._byPath = new Map();
     this._byBasename = new Map();
 
-    let indexed = 0;
-    let skipped = 0;
-    const excluded = [];
-
     for (const en of entries) {
-      if (this._shouldSkip(en.path)) { skipped++; excluded.push(en.path); continue; }
-      const ext = en.path.includes('.') ? '.' + en.path.split('.').pop().toLowerCase() : '';
+      if (this._shouldSkip(en.path)) continue;
       const fe = {
         path: en.path,
         basename: en.path.split('/').pop(),
         size: en.size || 0,
-        lines: 0,
-        lang: this._langOf(en.path),
+        lines: en.lines || 0,
+        lang: en.lang || this._langOf(en.path),
       };
       if (en.data) fe.data = en.data;
       if (en.file) fe.file = en.file;
+      if (en.url) fe.url = en.url;
       this.files.push(fe);
-      indexed++;
-    }
-
-    // 若 CLI 索引存在，用其补充元信息（lines/lang/size）
-    if (index && Array.isArray(index.files)) {
-      const byPath = new Map();
-      for (const it of index.files) byPath.set(it.path, it);
-      for (const fe of this.files) {
-        const meta = byPath.get(fe.path);
-        if (meta) {
-          fe.lines = meta.lines || 0;
-          fe.lang = meta.lang || fe.lang;
-          fe.size = meta.size || fe.size;
-        }
-      }
-      this.index = index;
-    } else {
-      this.index = null;
     }
 
     for (const fe of this.files) {
@@ -298,36 +531,56 @@ const SourceLink = {
       this._byBasename.get(fe.basename).push(fe);
     }
 
-    this.stats = { scanned: entries.length, indexed, skipped };
-    this.excluded = excluded;
     if (SourceViewer) SourceViewer.renderTree();
+    // 导入/排除规则变更后，同步刷新网格与详情里的源码跳转入口显隐
+    if (typeof App !== 'undefined' && App.refreshSourceLinks) App.refreshSourceLinks();
   },
 
   clear() {
-    this.index = null;
     this.files = [];
     this._byBasename = null;
     this._byPath = null;
     this.mode = '';
     this.bundleName = '';
     this._refMode = false;
-    this.stats = null;
-    this.excluded = null;
+    this._rawEntries = null;
+    this._textLRU = [];
     this.invalidateLogRef();
     if (SourceViewer) SourceViewer.renderTree();
+    if (typeof App !== 'undefined' && App.refreshSourceLinks) App.refreshSourceLinks();
   },
 
   // ===== 内容读取（懒加载） =====
 
+  // 记录最近使用，超出上限时淘汰最久未用条目的解码文本（zip 模式仍可从 data 重新解码）
+  _touchText(entry) {
+    const lru = this._textLRU;
+    const i = lru.indexOf(entry);
+    if (i >= 0) lru.splice(i, 1);
+    lru.unshift(entry);
+    while (lru.length > this.TEXT_CACHE_MAX) {
+      const old = lru.pop();
+      if (old && old !== entry) old._text = undefined;
+    }
+  },
+
   async getFileText(entry) {
-    if (entry._text !== undefined) return entry._text;
+    if (entry._text !== undefined) {
+      this._touchText(entry);
+      return entry._text;
+    }
     let text = '';
     if (entry.data) {
       text = new TextDecoder('UTF-8').decode(entry.data);
     } else if (entry.file && typeof entry.file.text === 'function') {
       text = await entry.file.text();
+    } else if (entry.url) {
+      const resp = await fetch(entry.url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      text = await resp.text();
     }
     entry._text = text;
+    this._touchText(entry);
     return text;
   },
 
