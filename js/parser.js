@@ -755,6 +755,135 @@ const LogParser = {
     return allEntries;
   },
 
+  // 合并「已在内存中取得」的文本（远程日志：{name, text}）
+  // 流程与 mergeFiles 保持一致：逐文件流式解析 + 跳过清单（空文本/解析失败），
+  // 复用 _splitLines / autoDetect / getParser，避免伪造 File 对象。
+  async mergeTexts(items, config = {}, append = false) {
+    const cfg = { ...this.config, ...config };
+    this.config = cfg;
+    this._detectedPreset = null;
+    this._lastSkipped = [];
+
+    const savedEntries = append ? [...this.entries] : [];
+    const savedSrc = append ? [...this.sourceFiles] : [];
+
+    this.entries = [];
+    this.sourceFiles = [];
+
+    let allEntries = [];
+    const allSourceFiles = [];
+    const skippedFiles = [];
+    let totalSize = 0;
+
+    for (const item of items) {
+      const name = (item && item.name) || 'remote';
+      try {
+        const text = (item && item.text) || '';
+        const lines = this._splitLines(text);
+
+        let preset = cfg.preset;
+        if (preset === 'auto') {
+          preset = this.autoDetect(lines);
+        }
+        const parser = this.getParser(preset, cfg);
+
+        let added = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (!line.trim()) continue;
+          const entry = parser(line, i);
+          if (entry) {
+            entry.index = allEntries.length;
+            entry.lineNumber = i;
+            entry.sourceFile = name;
+            allEntries.push(entry);
+            added++;
+          }
+        }
+
+        if (added === 0) {
+          // 空文本（或无有效行）→ 跳过
+          skippedFiles.push(name);
+        } else {
+          const size = item.size != null ? item.size : text.length;
+          allSourceFiles.push({ name, size });
+          totalSize += size;
+        }
+      } catch (e) {
+        skippedFiles.push(name);
+        console.error(`解析远程日志失败: ${name}`, e);
+      }
+    }
+
+    if (allEntries.length === 0 && savedEntries.length === 0) {
+      const n = skippedFiles.length;
+      throw new Error(n
+        ? `全部 ${n} 个远程文件为空或解析失败，没有可解析的日志内容`
+        : '没有可解析的日志内容');
+    }
+
+    // 部分失败/跳过不在此提示，记录后由上层（App.onDataLoaded）统一展示
+    this._lastSkipped = skippedFiles;
+
+    if (append && savedEntries.length > 0) {
+      allEntries = savedEntries.concat(allEntries);
+      for (const sf of savedSrc) {
+        if (!allSourceFiles.some(f => f.name === sf.name)) allSourceFiles.push(sf);
+      }
+    }
+
+    // 按时间戳排序
+    allEntries.sort((a, b) => {
+      if (a.date && b.date) return a.date - b.date;
+      if (a.date) return -1;
+      if (b.date) return 1;
+      return 0;
+    });
+
+    // 重新编号
+    allEntries.forEach((e, i) => (e.index = i));
+
+    this.entries = allEntries;
+    this.sourceFiles = allSourceFiles;
+    this.fileInfo = {
+      name: append && savedEntries.length
+        ? `远程日志（追加 ${items.length} 个文件）`
+        : `${items.length} 个远程文件`,
+      size: totalSize,
+      isMerged: true,
+      isRemote: true,
+      fileCount: items.length,
+      totalSourceFiles: allSourceFiles.length
+    };
+
+    return allEntries;
+  },
+
+  // 实时追踪：把新增的若干「完整行」解析后追加到现有条目末尾
+  // 与 mergeTexts 的区别：不重排、不重编号已有条目，仅在末尾追加；返回新增条目数
+  appendTail(name, lines) {
+    if (!lines || !lines.length) return 0;
+    const cfg = this.config;
+    let preset = cfg.preset;
+    if (preset === 'auto') preset = this._detectedPreset || this.autoDetect(lines);
+    const parser = this.getParser(preset, cfg);
+
+    let added = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      const entry = parser(line, i);
+      if (entry) {
+        entry.index = this.entries.length;
+        entry.lineNumber = i;
+        entry.sourceFile = name;
+        this.entries.push(entry);
+        added++;
+      }
+    }
+    return added;
+  },
+
   // 清除
   clear() {
     this.entries = [];

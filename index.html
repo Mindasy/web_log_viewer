@@ -13,7 +13,6 @@
     <button id="btn-open" title="打开日志文件 (Ctrl+O)">📂 打开</button>
     <button id="btn-merge" title="合并多个日志文件">🔗 合并</button>
     <button id="btn-reload" title="重新加载当前文件">🔄 重新加载</button>
-    <button id="btn-tail" title="实时追踪文件变化">▶️ 实时追踪</button>
     <span class="separator"></span>
     <button id="btn-export" title="导出过滤结果">💾 导出</button>
     <button id="btn-clear" title="清除所有日志">🗑️ 清除</button>
@@ -25,6 +24,7 @@
     <button id="btn-stats" title="统计信息">📊 统计</button>
     <button id="btn-timeline" title="时间线视图">📈 时间线</button>
     <button id="btn-source" title="源码查看与项目导入">📄 源码</button>
+    <button id="btn-remote-logs" title="从服务端加载远端日志（需 server.py --logs-root/--project 启动）">🌐 远程日志</button>
     <span class="separator"></span>
     <button id="btn-toggle-files" title="显示/隐藏文件列表">📁 文件</button>
     <button id="btn-column-settings" title="列设置">📊 列</button>
@@ -364,6 +364,43 @@
     </div>
   </div>
   <div id="sv-status" class="popup-footer"></div>
+</div>
+
+<!-- 远程日志面板（v3-1，非模态，样式对齐源码面板） -->
+<div id="remote-logs-panel" class="popup-panel" style="display:none;">
+  <div class="popup-header">
+    <span>🌐 远程日志</span>
+    <span id="rl-root-label" class="sv-project-label"></span>
+    <button id="btn-close-remote-logs" title="关闭">✕</button>
+  </div>
+  <div class="rl-toolbar">
+    <input type="text" id="rl-url" class="sv-remote-url rl-url" placeholder="服务端地址(如 http://localhost:8765，留空=同源)" />
+    <input type="text" id="rl-token" class="rl-token" placeholder="口令(可选)" />
+    <button id="btn-rl-connect" title="探测 /source/ping 并列出日志">连接</button>
+    <span id="rl-state" class="sv-server-state"></span>
+  </div>
+  <div class="rl-list-head">
+    <label class="rl-select-all-label" title="全选/取消全部筛选结果"><input type="checkbox" id="rl-select-all" /> 全选</label>
+    <button id="btn-rl-sel-invert" class="rl-link-btn" title="反选（作用于筛选结果）">反选</button>
+    <button id="btn-rl-sel-none" class="rl-link-btn" title="取消选择（作用于筛选结果）">取消</button>
+    <span id="rl-sel-count" class="rl-sel-count"></span>
+    <span class="rl-spacer"></span>
+    <button id="btn-rl-refresh" class="rl-link-btn" title="重新拉取文件列表">刷新列表</button>
+  </div>
+  <div class="rl-filter-row">
+    <input type="text" id="rl-filter" class="rl-filter" placeholder="🔍 过滤文件（空格分词，如 log error；Esc 清空）" />
+    <span id="rl-ext-chips" class="rl-ext-chips"></span>
+  </div>
+  <div id="rl-list" class="rl-list"></div>
+  <div class="popup-footer">
+    <label class="rl-append-label" title="保留当前已加载的日志，把远程日志追加到同一视图">
+      <input type="checkbox" id="rl-append" /> 追加到当前日志
+    </label>
+    <span class="rl-spacer"></span>
+    <span id="rl-tail-state" class="rl-tail-state"></span>
+    <button id="btn-rl-tail" title="实时追踪所选单个文件：轮询服务端增量并自动追加（再次点击停止）">▶ 跟踪</button>
+    <button id="btn-rl-load" title="拉取所选文件并解析（压缩包自动解压）">加载所选</button>
+  </div>
 </div>
 
 <!-- 时间线 tooltip（位于面板外，避免被 overflow/transform 裁剪） -->
@@ -1043,6 +1080,8 @@
         <li><strong>重新加载</strong> — 调整解析规则后「🔄 重新加载」按当前配置重新解析</li>
         <li><strong>导出 / 清除</strong> — 「💾 导出」保存过滤后的结果，「🗑️ 清除」清空全部日志</li>
         <li><strong>文件列表 / 列设置</strong> — 「📁 文件」按来源过滤，「📊 列」控制显示哪些列及其顺序</li>
+        <li><strong>远程加载</strong> — 服务端模式下，「📄 源码」加载远端源码、「🌐 远程日志」加载远端日志（地址留空 = 同源）</li>
+        <li><strong>实时追踪</strong> — 「🌐 远程日志」中选中 1 个文件后点「▶ 跟踪」，轮询服务端增量并自动追加新行（再次点击停止）</li>
       </ul>
     </div>
     <div class="help-section">
@@ -1166,6 +1205,7 @@
 <script src="js/callstack.js"></script>
 <script src="js/source_link.js"></script>
 <script src="js/source_viewer.js"></script>
+<script src="js/remote_logs.js"></script>
   <script src="js/view_manager.js"></script>
   <script src="js/stats.js"></script>
 <script src="js/app.js"></script>

@@ -4,11 +4,6 @@ const App = {
   // 书签
   bookmarks: [],
 
-  // 实时追踪
-  tailTimer: null,
-  tailFile: null,
-  tailLastSize: 0,
-
   // 待解析的文件（向导用）
   pendingFiles: null,
 
@@ -27,6 +22,7 @@ const App = {
     CallStack.init();
     SourceLink.init();
     SourceViewer.init();
+    RemoteLogs.init();
     // 窗口大小变化时重绘时间线
     window.addEventListener('resize', Utils.debounce(() => {
       this._resizeActiveTimeline();
@@ -112,8 +108,6 @@ const App = {
     });
 
     document.getElementById('btn-reload').addEventListener('click', () => this.reloadFile());
-
-    document.getElementById('btn-tail').addEventListener('click', () => this.toggleTail());
 
     document.getElementById('btn-export').addEventListener('click', () => this.exportLogs());
 
@@ -1215,33 +1209,15 @@ const App = {
     }
   },
 
-  // ===== 实时追踪 =====
-  // 实时追踪用于监控正在写入的日志文件（如应用运行时日志）。
-  // 由于浏览器安全限制，无法直接访问本地文件系统进行 tail -f 操作。
-  // 当前为模拟模式，实际使用时需要配合后端 API 或本地服务实现真正的文件轮询。
-  toggleTail() {
-    const btn = document.getElementById('btn-tail');
-    if (this.tailTimer) {
-      clearInterval(this.tailTimer);
-      this.tailTimer = null;
-      this.tailFile = null;
-      btn.textContent = '▶️ 实时追踪';
-      btn.style.color = '';
-      document.getElementById('status-text').textContent = '就绪';
-      Utils.showToast('已停止实时追踪');
-    } else {
-      if (!LogParser.fileInfo) {
-        Utils.showToast('请先打开文件', 'error');
-        return;
-      }
-      btn.textContent = '⏸️ 停止追踪';
-      btn.style.color = 'var(--success)';
-      document.getElementById('status-text').textContent = '实时追踪中（模拟）';
-      Utils.showToast('实时追踪：浏览器端无法直接 tail 本地文件。如需真正实时追踪，请配合后端轮询接口使用。当前为模拟演示。', 'success');
-      this.tailTimer = setInterval(() => {
-        document.getElementById('status-text').textContent = '实时追踪中（模拟）';
-      }, 2000);
-    }
+  // ===== 实时追踪（远程日志）=====
+  // 实时追踪由「🌐 远程日志」面板驱动：轮询服务端 /api/logs?from=<byteOffset> 增量，
+  // 新行经 LogParser.appendTail 追加后由此收尾刷新。
+  // 视图为快照，实时追加会使其过期，故先退出视图以跟随最新日志。
+  refreshTail() {
+    if (ViewManager.isInView()) ViewManager.clear();
+    LogGrid.refreshTail();
+    this.updateSearchStats();
+    this._updateSaveViewButton();
   },
 
   // ===== 导出 =====
@@ -1259,6 +1235,7 @@ const App = {
 
   // ===== 清除 =====
   clearAll() {
+    if (typeof RemoteLogs !== 'undefined' && RemoteLogs.stopTail) RemoteLogs.stopTail(true);
     LogParser.clear();
     this.bookmarks = [];
     LogFilter.resetSearch();

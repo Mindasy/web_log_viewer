@@ -798,6 +798,35 @@ const LogGrid = {
     this.setData(filtered);
   },
 
+  // 实时追踪：追加新条目后的轻量刷新
+  // 保留当前滚动位置与选中行；若刷新前位于底部，则自动跟随到最新行。
+  // 与 setData 不同，不重置滚动到顶部 / 选中到首行，避免每秒轮询时视图跳动。
+  refreshTail() {
+    const wasBottom = this.totalRows === 0
+      || this._virtualRow >= Math.max(0, this.totalRows - this.visibleCount - 1);
+    const prevEntry = (this.selectedIndex >= 0 && this.selectedIndex < this.entries.length)
+      ? this.entries[this.selectedIndex] : null;
+    const prevVR = this._virtualRow;
+
+    const filtered = LogFilter.apply(LogParser.entries);
+    this.entries = filtered;
+    this.totalRows = filtered.length;
+    this.rebuildDynamicCols(filtered);
+    this.autoHideEmptyColumns(filtered);
+    this.renderHeader();
+
+    if (prevEntry) {
+      const idx = filtered.indexOf(prevEntry);
+      this.selectedIndex = idx;  // 未命中过滤条件时为 -1
+    }
+    this.calculateVisibleCount();
+    const maxVR = Math.max(0, this.totalRows - this.visibleCount);
+    this._virtualRow = wasBottom ? maxVR : Math.min(prevVR, maxVR);
+    this.render();
+    App.updateCurrentRow();
+    this.updateStatusBar();
+  },
+
   getVisibleColumnDefs() {
     return this.getAllColDefs().filter(d => this.isColumnVisible(d.key));
   }

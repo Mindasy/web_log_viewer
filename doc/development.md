@@ -28,6 +28,7 @@ web_log_viewer/
 │   ├── inflate.js          # 自研 raw DEFLATE 解压（RFC 1951）
 │   ├── gzip.js             # 自研 gzip 解压 + CRC32（RFC 1952）
 │   ├── zip.js              # 自研 ZIP 容器解析（含 zip64）
+│   ├── remote_logs.js      # 远端日志加载 + 实时追踪（服务端 /api/logs、from= 增量，v3-1）
 │   ├── db.js               # IndexedDB 数据库操作
 │   ├── filter.js           # 过滤与搜索引擎
 │   ├── grid.js             # 虚拟滚动日志表格

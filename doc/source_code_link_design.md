@@ -1,5 +1,15 @@
 # 日志与代码行关联（Source Code Link）— 设计文档
 
+> **修订记录（2026-10-12）**
+> - §3 索引 `stats` 补 `totalBytes`（与 `server.py` 实际输出字段对齐）
+> - §4 数据源表：D / E 的「阶段」由 `v3-1` 更正为**已交付**；v3-1 范围澄清为「远程**日志**加载」（非源码数据源）
+> - §5.4 / §5.5 / §9 v2.7：移除已随 v3-2 删除的 CLI 表述，统一改为「服务端」模式
+> - §9：小节顺序调整为 `v3-1 → v3-2`（按编号升序），并标注「待实现 / 已交付」
+> - §9 v3-1：测试文件由 `test_11_remote_source.py` 更正为 `test_18_remote_source.py`；补充 `mergeTexts` 与导入健壮性对齐说明
+> - §5.4 / §9 v3-1：排除规则的命令入口（`--exclude-dir/--exclude-file`、`--config`）**决定随 v3-1 迁入 `server.py`**（不再遗留）
+> - §9 v3-1 **已交付**：`server.py` 新增 `/api/logs`、`/api/logs/list`、`--logs-root`、`--token`、`_resolve_under`、`load_excludes`；前端新增 `js/remote_logs.js`；测试见 `test/test_18_remote_source.py`
+> - §9 v3-1 续 **已交付**：远程**实时追踪**并入「🌐 远程日志」——`/api/logs` 增 `from=<字节偏移>` 增量分支（`X-Log-Size` / `X-Log-Reset`）；移除工具栏占位按钮 `btn-tail` 与 `App.toggleTail`；新增 `LogParser.appendTail` 与 `LogGrid.refreshTail`
+
 ## 1. 目标与范围
 
 让日志中的 `source` 字段（如 `main.cpp:42`、`com.example.Service:handle:42`）可点击跳转到真实源代码文件对应行，打通「日志 → 代码」定位链路。
@@ -63,7 +73,7 @@ server.py  — collect_files / build_index：扫描项目 → 过滤 → 生成 
   "schema": 1,
   "project": "mini_cpp_demo",
   "generatedAt": "2026-09-01T10:00:00+08:00",
-  "stats": { "scanned": 1200, "indexed": 15, "excludedDirs": 1180, "excludedFiles": 5 },
+  "stats": { "scanned": 1200, "indexed": 15, "totalBytes": 262144, "excludedDirs": 1180, "excludedFiles": 5 },
   "excluded": [
     { "type": "dir",  "path": "node_modules" },
     { "type": "file", "path": "build/main.o" }
@@ -85,11 +95,14 @@ server.py  — collect_files / build_index：扫描项目 → 过滤 → 生成 
 |---|---|---|---|
 | A.（已移除）CLI 索引工具 | 原 `index_source.py`，已并入 `server.py` | — | v3-2 合并 |
 | B. 压缩包上传 | 上传 zip/tar.gz，前端解压时按规则过滤 | 中小项目 | MVP（已确认） |
-| C. 目录拖拽 | `webkitdirectory` 递归读取，前端实时索引 | 中小项目、免 CLI | MVP（已确认） |
-| D. 远程服务 | `server.py --project <path>`（远程部署 + 端口转发；`--no-static` 仅后端） | 远程开发（VSCode Remote-SSH 等） | v3-1 |
-| E. HTTP 索引 URL | 输入 `source-index.json` 的 URL，前端按相对路径拉取 | 任意 HTTP 静态托管（nginx 等） | v3-1 |
+| C. 目录拖拽 | `webkitdirectory` 递归读取，前端实时索引 | 中小项目、无需服务端 | MVP（已确认） |
+| D. 远程服务 | `server.py --project <path>`（远程部署 + 端口转发；`--no-static` 仅后端） | 远程开发（VSCode Remote-SSH 等） | **已交付**（v3 / v3-2） |
+| E. HTTP 索引 URL | 输入 `source-index.json` 的 URL，前端按相对路径拉取 | 任意 HTTP 静态托管（nginx 等） | **已交付**（v3） |
 
 统一入口：工具栏「📄 源码」→ 源码面板顶部导入区（按钮：选择源码包 / 选择目录）。
+
+> 修正（v3-1）：上表 D / E 两种**源码数据源**已随 v3 交付（此列此前误标为 `v3-1`）。
+> v3-1 的真实范围是**远程日志加载**（从 server 取日志内容再在前端解析），与 D / E 的「源码数据源」是两件事，详见 §9 → v3-1。
 
 ---
 
@@ -121,12 +134,12 @@ package-lock.json yarn.lock pnpm-lock.yaml Cargo.lock composer.lock Gemfile.lock
 
 ### 5.4 可配置项
 
-- CLI：`--exclude-dir`、`--exclude-file` 追加排除；`--config .sourcelink.json` 读取项目内配置
-- 前端面板：显示「已索引 N / 排除 M」统计 + 排除明细（可展开），支持追加排除后重新过滤
+- 前端面板：显示「已索引 N / 排除 M」统计 + 排除明细（可展开），支持追加排除后重新过滤（**已实现**）
+- `server.py`：`--exclude-dir` / `--exclude-file`（可重复）追加排除；`--config <path>` 读取项目配置（默认 `.sourcelink.json`）〔**移至 v3-1 从原 CLI 迁移**，见 §9 → v3-1〕
 
 ### 5.5 超限降级
 
-- 前端索引超过 5000 文件或 200MB 时：提示改用 CLI 工具；文件内容一律懒加载
+- 前端索引超过 5000 文件或 200MB 时：提示改用「服务端」模式；文件内容一律懒加载
 - 索引过程分批/异步（`setTimeout` 切片或 Worker），避免阻塞 UI
 
 ---
@@ -197,9 +210,11 @@ package-lock.json yarn.lock pnpm-lock.yaml Cargo.lock composer.lock Gemfile.lock
 
 ---
 
-## 9. 三阶段实施计划
+## 9. 分阶段实施计划
 
-### MVP：CLI 工具 + 压缩包 + 目录拖拽导入 + 详情面板跳转
+> 小节按版本编号升序排列；`〔已交付〕` 为现状，`〔待实现〕` 为待办。
+
+### MVP：压缩包 + 目录拖拽导入 + 详情面板跳转（内置索引）〔已交付〕
 
 > 注：MVP 阶段的独立 CLI 工具 `index_source.py` 已在 **v3-2 并入 `server.py` 并删除**（见下文 v3-2）。
 
@@ -232,7 +247,7 @@ python3 tools/source_link/index_source.py <项目路径> [-o source-bundle.zip] 
 
 目录拖拽：`input[webkitdirectory]` 的 FileList 自带 `webkitRelativePath`，无需手动递归；内容存 File 引用，点击时再读（懒加载）。
 
-### v2：查看器增强 + 全入口（详细设计）
+### v2：查看器增强 + 全入口（详细设计）〔已交付〕
 
 > 目标：#61。MVP 只打通"详情面板 → 查看代码"。v2 将入口扩展到网格与调用栈，并解决大项目下的渲染性能（大文件代码、大目录索引、大文件树）。
 
@@ -290,7 +305,7 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 
 - `importDirectory`：FileList 分片处理（每片 ~1500 项），`requestIdleCallback || setTimeout(…, 0)` 逐片执行 `_shouldSkip` 收集，片间更新进度（`Utils.showLoading('索引中 x/y')`）；完成后一次 `_buildIndex`
 - `importArchive`：zip 解压后过滤与 `_buildIndex` 保持同步（解压本身已异步），超大 zip 时沿用 ArchiveHandler 1GB 上限保护
-- 上限提示：目录文件数 > 20000 时 Toast 建议"改用 CLI 生成源码包"（不阻断）
+- 上限提示：目录文件数 > 20000 时 Toast 建议"改用「服务端」模式"（不阻断）〔原设计为 CLI，随 v3-2 改服务端〕
 - 移除：当前同步 for 循环导致的导入卡顿
 
 **v2.8 反向索引：仅日志相关文件（评审新增项）**
@@ -321,30 +336,17 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 | 反向索引 | source_link.js 含 `_logRefSet`/toggle 分支与自动回退逻辑；index.html/css 含对应 UI |
 | 回归 | `validate.py` 全量（含服务器冒烟） |
 
-### v3：服务端模式基础 + 自定义规则管理
+### v3：服务端模式基础 + 自定义规则管理〔已交付〕
 
 | 文件 | 改动 |
 |---|---|
 | `server.py` | `--project <path>` 参数 + `/source/*` 静态路由（索引 + 源码文件） |
 | `js/source_link.js` | 服务端数据源拉取（`fetch`）；数据源抽象为 `zip / dir / server / http` 四种模式 |
 | `js/source_viewer.js` | 排除规则 UI 管理（面板内增删并重新过滤） |
-| `server.py` | 索引逻辑内联（原 `index_source.py` 并入），并新增 `--no-static`（仅后端接口） |
 
-### v3-2：索引逻辑并入 server.py（降低部署成本）
+> 索引逻辑内联与 `--no-static` 属 v3-2，见下。
 
-**目标**：服务端可**单文件部署**（不再依赖 `tools/source_link/index_source.py`），同时允许只跑后端接口。
-
-**改动**：
-
-| 文件 | 改动 |
-|---|---|
-| `server.py` | 内联 `DEFAULT_EXCLUDE_DIRS/FILES`、`SOURCE_EXTS`、`LANG_MAP`、`collect_files`、`read_source`、`build_index`；删除 `_load_index_source()`；新增 `--no-static`（不托管静态文件，仅 `/source/*`） |
-| `tools/source_link/index_source.py` | 删除（索引能力并入 server.py；离线 zip 由 server 的 `/source/index.json` 或前端目录/压缩包导入替代） |
-| `.github/workflows/release.yml` | 移除该工具附件 |
-| `test/test_10_source_link.py` | 改为以模块方式加载 `server.py` 断言内置 `build_index` 输出 |
-| `test/test_16_source_link_v3.py` | 移除 CLI 缓存用例，新增 `--no-static` 冒烟 |
-
-### v3-1：远程日志加载（VSCode Remote-SSH 等场景）
+### v3-1：远程日志加载（VSCode Remote-SSH 等场景）〔已交付〕
 
 > 现状：v3 已交付「远程源码」——`server.py --project` + `/source/*` + 标识 API，且索引逻辑已内联（单文件部署、`--no-static` 可只跑后端）。
 > v3-1 补齐「远程日志」：远程开发时日志也在远端，浏览器需从 server 取日志内容后再解析。
@@ -366,27 +368,62 @@ SourceLink.openSource(src)   ← 唯一跳转入口（未导入源码时 Toast �
 
 - 与 `/source/*` 共用 CORS 头与 `do_OPTIONS` 预检，支持 `file://` 静态页跨域。
 - 启动参数：`--logs-root <dir>`（日志根，默认 = `--project`，未设则当前目录）；`--token <str>`（可选，设后要求 `X-Auth-Token` 头或 `?token=`，否则 401）。
+- **排除规则迁移（v3-1 并入）**：`--exclude-dir` / `--exclude-file`（可重复追加）与 `--config <path>`（默认 `.sourcelink.json`）从原 CLI 迁到 `server.py`，作用于源码索引（与前端面板内规则叠加）。
 - 把 `resolve_file` 的穿越防护抽为通用 `_resolve_under(root, rel)`，`/source/files` 与 `/api/logs` 共用。
 
 **前端改动**
 
 | 文件 | 改动 |
 |---|---|
-| `js/parser.js` | 新增 `mergeTexts(items, cfg, append)`：把已取得的 `{name, text}` 按现有逐文件流程解析（复用 `_splitLines`/`getParser`/格式检测/跳过清单），避免伪造 File 对象 |
-| `js/app.js` | 新增「🌐 远程日志」入口：探测 `/source/ping` → 输入/选择文件 → `fetch` → `mergeTexts`；压缩包走 `binary=1` + `ArchiveHandler`；复用 `onDataLoaded`/视图/过滤 |
-| `index.html` / `css/style.css` | 远程日志入口 UI（地址 + 连接状态 + 文件列表），样式与源码面板一致 |
+| `js/parser.js` | 新增 `mergeTexts(items, cfg, append)`：把已取得的 `{name, text}` 按现有逐文件流程解析，避免伪造 File 对象（对齐要求见下方「对齐修正」） |
+| `js/remote_logs.js` | 新增：`RemoteLogs`（探测 `/source/ping` → `/api/logs/list` → 逐文件 `fetch`（压缩包走 `binary=1` + `ArchiveHandler`）→ `LogParser.mergeTexts`）+「🌐 远程日志」面板 UI（地址/口令/连接状态/文件列表/追加；**大列表友好选择**：关键词过滤、扩展名快捷筛选、全选/反选/取消（作用于筛选结果）、已选计数、渲染上限） |
+| `js/app.js` | 调用 `RemoteLogs.init()` 注册入口；加载后复用 `onDataLoaded`/视图/过滤 |
+| `index.html` / `css/style.css` | 工具栏「🌐 远程日志」按钮 + 远程日志面板（样式对齐源码面板） |
 | `js/source_link.js` | 复用已配置的 server 地址与探测结果（`sv-server-base` / `_serverState`），避免重复输入 |
+
+> **对齐修正（依赖当前实现，实现时必须遵守）**：`mergeTexts` 需与本地拖拽导入路径行为一致——
+> - 复用 `_splitLines` + **逐文件流式解析**（现行实现已移除 `allLines` / `fileLineMap` 大数组，勿回退）；
+> - 接入**导入健壮性**：空文本跳过、解析失败跳过，统一经 `LogParser._lastSkipped` / `consumeSkipped()`，由 `onDataLoaded` 汇总提示（全部失败抛错、部分失败提示）；
+> - 增量追加（`append=true`）同样维护跳过清单，并使反向索引引用集失效（`SourceLink.invalidateLogRef()`）以重建。
 
 **边界与安全（含非目标）**
 - 非目标：远端写操作、目录递归打包下载、账号体系 / HTTPS 终止（仅可选静态 token）。
 - 拒绝不存在的路径、目录、超限文件（默认 200MB，与本地大文件警告一致）；穿越请求 404。
 - `/api/logs/list` 只列名不返内容；大文件加载前给出体积提示。
 
-**测试**：`test/test_11_remote_source.py`
+**测试**：`test/test_18_remote_source.py`
+
+> 编号修正：原设计为 `test_11_remote_source.py`；当前仓库 `test_11` 不存在、`test_12` 已被 `source_link_v2` 占用，编号已用到 `test_17`，故顺延为 `test_18`。
+
 - server：`/api/logs` 正常读取、防穿越、二进制/超限拒绝、`--token` 设/未设（401/200）、CORS/OPTIONS。
-- 前端：静态断言（远程日志入口、`mergeTexts`、`binary=1` 走 ArchiveHandler）；node 运行时 `mergeTexts` 解析样例文本（含 `\r\n`）。
+- 前端：静态断言（远程日志入口、`mergeTexts`、`binary=1` 走 ArchiveHandler）；node 运行时 `mergeTexts` 解析样例文本（含 `\r\n`，以及空/失败文件计入跳过清单）。
 
 **文档**：`doc/usage-examples.md` 增「远程开发（端口转发 + `--no-static`）」；`doc/features.md` 增「日志↔源码关联」「远程日志加载」条目。
+
+**延伸（v3-1 续，已交付）：远程实时追踪**
+
+> 原工具栏「▶️ 实时追踪」为浏览器端占位实现（仅切换文案、不读文件），已删除；真实能力并入「🌐 远程日志」面板。
+
+- **服务端**：`GET /api/logs?file=<相对路径>&from=<字节偏移>` 返回自该字节偏移起的内容；响应头 `X-Log-Size`（服务端当前文件大小，作为下次 `from`）与 `X-Log-Reset: 1`（`from` 越界 → 文件被截断/轮转，已从头返回）；经 `Access-Control-Expose-Headers` 暴露，`file://` 静态页跨域亦可读取。
+- **前端 `js/remote_logs.js`**：`readFrom` / `startTail` / `stopTail` / `_tailPoll`；**仅允许单选 1 个文件**，先 `from=0` 全量载入，再每 2s 轮询增量；`TextDecoder({stream:true})` 跨块处理多字节字符，缓存半行至行尾到齐。
+- **`js/parser.js`**：新增 `appendTail(name, lines)` —— 仅解析新增的完整行并追加到末尾，不重排 / 不重编号既有条目。
+- **`js/grid.js` / `js/app.js`**：`LogGrid.refreshTail()` / `App.refreshTail()` 增量刷新，保留滚动与选中；刷新前位于底部时自动跟随最新行（避免每秒轮询视图跳动）。
+- **边界**：压缩包不支持追踪；「加载所选」或「🗑️ 清除」会先停止追踪；跨块多字节与半行安全。
+- **测试**：`test/test_18_remote_source.py` 增 server `from=` 增量 / `X-Log-Size` / `X-Log-Reset` 断言，`appendTail` node 运行时用例，及面板控件（`btn-rl-tail`）与旧 `btn-tail` 移除断言。
+
+### v3-2：索引逻辑并入 server.py（降低部署成本）〔已交付〕
+
+**目标**：服务端可**单文件部署**（不再依赖 `tools/source_link/index_source.py`），同时允许只跑后端接口。
+
+**改动**：
+
+| 文件 | 改动 |
+|---|---|
+| `server.py` | 内联 `DEFAULT_EXCLUDE_DIRS/FILES`、`SOURCE_EXTS`、`LANG_MAP`、`collect_files`、`read_source`、`build_index`；删除 `_load_index_source()`；新增 `--no-static`（不托管静态文件，仅 `/source/*`） |
+| `tools/source_link/index_source.py` | 删除（索引能力并入 server.py；离线 zip 由 server 的 `/source/index.json` 或前端目录/压缩包导入替代） |
+| `.github/workflows/release.yml` | 移除该工具附件 |
+| `test/test_10_source_link.py` | 改为以模块方式加载 `server.py` 断言内置 `build_index` 输出 |
+| `test/test_16_source_link_v3.py` | 移除 CLI 缓存用例，新增 `--no-static` 冒烟 |
 
 ---
 
