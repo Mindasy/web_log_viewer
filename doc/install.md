@@ -32,14 +32,17 @@ python3 server.py
 open http://localhost:8765
 ```
 
-除托管网页外，服务器还可在**服务端模式**下提供远端源码接口（用于日志 → 源码跳转，可选）：
+除托管网页外，服务器还可在**服务端模式**下提供远端源码（`/source/*`）与远端日志（`/api/logs`）接口（可选）：
 
 ```bash
 # 额外提供 /source/* 源码索引与文件接口
 python3 server.py --project /path/to/your/project
 
+# 额外提供 /api/logs 远端日志接口（日志根默认 = --project，未设则当前目录）
+python3 server.py --logs-root /var/log/myapp
+
 # 仅提供后端接口，不托管网页（页面用静态方式 / GitHub Pages 打开）
-python3 server.py --project /path/to/your/project --no-static
+python3 server.py --project /path/to/your/project --logs-root /var/log/myapp --no-static
 
 # 其它参数
 python3 server.py --project <dir> --port 9000 --no-browser
@@ -48,11 +51,16 @@ python3 server.py --project <dir> --port 9000 --no-browser
 | 参数 | 说明 |
 |------|------|
 | `--project <dir>` | 源码目录：启用 `/source/index.json`、`/source/files/<path>` |
-| `--no-static` | 只提供 `/source/*` 后端接口，不托管静态网页 |
+| `--logs-root <dir>` | 远端日志根目录：启用 `/api/logs`、`/api/logs/list`（默认 = `--project`，未设则当前目录） |
+| `--token <str>` | 为后端接口启用鉴权（`/source/ping` 除外），需带 `X-Auth-Token` 头或 `?token=` |
+| `--exclude-dir <name>` | 追加源码排除目录（可重复） |
+| `--exclude-file <glob>` | 追加源码排除文件 glob（可重复） |
+| `--config <path>` | 排除规则配置文件（默认自动读取 `.sourcelink.json`） |
+| `--no-static` | 只提供后端接口（`/source/*`、`/api/logs`），不托管静态网页 |
 | `--port <n>` | 监听端口（默认 8765） |
 | `--no-browser` | 启动后不自动打开浏览器 |
 
-> 索引逻辑内置于 `server.py`，无需任何额外脚本；`/source/*` 响应带 CORS 头，`file://` 打开的静态页面也能跨域访问。
+> 索引逻辑内置于 `server.py`，无需任何额外脚本；后端接口响应带 CORS 头，`file://` 打开的静态页面也能跨域访问。
 
 也可以手动启动：
 

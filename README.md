@@ -43,7 +43,9 @@ Web Log Viewer 是一个纯浏览器端运行的日志查看与分析工具。�
 - **🔖 书签系统** — 标记重要条目，快速跳转
 - **⚙️ 自定义 Pattern** — 保存解析规则到 IndexedDB，跨会话复用
 - **💾 内存优化** — 50MB 日志文件内存占用 ~135MB，支持大文件流畅分析
-- **🖥️ 可选服务端模式** — `server.py --project <源码目录>` 提供远端源码接口；`--no-static` 可只跑后端接口（本地离线使用不受影响）
+- **🖥️ 可选服务端模式** — `server.py --project <源码目录>` 提供远端源码接口；`--logs-root <日志目录>` 提供远端日志接口；`--no-static` 可只跑后端接口（本地离线使用不受影响）
+- **🌐 远程日志加载** — 服务端模式下工具栏「🌐 远程日志」可直接加载远端日志（单文件 / 多文件 / 压缩包），支持 token 鉴权
+- **▶ 远程实时追踪** — 「🌐 远程日志」中选中单个文件点「▶ 跟踪」，每 2 秒轮询增量并自动追加新行（文件轮转时自动续读）
 - **🌙 暗色/亮色双主题** — 保护视力，适应不同环境
 
 ## 快速开始
@@ -62,14 +64,20 @@ open http://localhost:8765
 
 也可以直接双击 `index.html` 打开，或使用其他静态服务器。
 
-需要跳转日志对应的源码时，以**服务端模式**启动（可选，本地离线使用无需此步）：
+需要加载远端源码 / 远端日志时，以**服务端模式**启动（可选，本地离线使用无需此步）：
 
 ```bash
 # 提供源码索引接口（浏览器「源码」面板填入地址后加载远端源码）
 python3 server.py --project /path/to/your/project
 
+# 同时提供远端日志接口（浏览器「🌐 远程日志」加载远端日志）
+python3 server.py --project /path/to/your/project --logs-root /var/log/myapp
+
 # 仅提供后端接口，不托管网页（页面用静态方式/GitHub Pages 打开）
-python3 server.py --project /path/to/your/project --no-static
+python3 server.py --project /path/to/your/project --logs-root /var/log/myapp --no-static
+
+# 可选：为后端接口加 token 鉴权
+python3 server.py --project /path/to/your/project --logs-root /var/log/myapp --token <口令>
 ```
 
 **更新到最新版本**：使用随版本发布的下载/更新工具（zsh / bash / bat 三平台），自动检测系统代理并获取最新 Release：

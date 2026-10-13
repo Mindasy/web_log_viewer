@@ -72,7 +72,8 @@ def _(t, flags):
         ("'Access-Control-Allow-Origin', '*'", "跨域 CORS 头"),
         ('def do_OPTIONS', "跨域预检 OPTIONS"),
         ('def resolve_file', "文件解析方法"),
-        ('startswith(self.project + os.sep)', "目录穿越防护"),
+        ('def _resolve_under', "通用目录穿越防护（/source/files 与 /api/logs 共用）"),
+        ('startswith(root + os.sep)', "目录穿越防护"),
         ('serve_static', "静态文件服务开关"),
     ]:
         t.check(frag in src or frag.replace("'", '"') in src, f"server.py 含 {desc}")
